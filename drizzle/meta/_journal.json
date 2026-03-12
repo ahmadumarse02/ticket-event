@@ -15,6 +15,13 @@
       "when": 1773321411412,
       "tag": "0001_tiny_daredevil",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1773336814840,
+      "tag": "0002_wooden_riptide",
+      "breakpoints": true
     }
   ]
 }
