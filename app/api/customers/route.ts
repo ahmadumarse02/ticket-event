@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { and, desc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { customers } from "@/lib/db/schema"
+import { logActivity } from "@/lib/activity"
 
 export const dynamic = "force-dynamic"
 
@@ -51,6 +52,17 @@ export async function POST(request: Request) {
   })
 
   const rows = await db.select().from(customers).where(eq(customers.id, id))
+
+  await logActivity({
+    entity: "customer",
+    entityId: id,
+    action: "created",
+    summary: `Added customer "${body.firstName} ${body.lastName}"`,
+    metadata: {
+      email: body.email,
+    },
+  })
+
   return NextResponse.json(
     {
       ...rows[0],

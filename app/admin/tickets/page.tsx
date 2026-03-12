@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useCallback } from "react"
+import { useState, useRef, useCallback, useEffect } from "react"
 import { PageHeader } from "@/components/admin/page-header"
 import { EmptyState } from "@/components/admin/empty-state"
 import {
@@ -33,6 +33,9 @@ import {
   MoreHorizontal,
   Edit,
 } from "lucide-react"
+import { useForm } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -421,6 +424,13 @@ const presetTemplates = [
   },
 ]
 
+const templateNameSchema = z.object({
+  name: z.string().min(1, "Template name is required."),
+  description: z.string().optional(),
+})
+
+type TemplateNameValues = z.infer<typeof templateNameSchema>
+
 export default function TicketDesignerPage() {
   const {
     data: templates = [],
@@ -439,6 +449,25 @@ export default function TicketDesignerPage() {
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
   
   const canvasRef = useRef<HTMLDivElement>(null)
+
+  const {
+    register: registerTemplateName,
+    handleSubmit: handleTemplateNameSubmit,
+    reset: resetTemplateName,
+    formState: { errors: templateNameErrors, isSubmitting: isSavingName },
+  } = useForm<TemplateNameValues>({
+    resolver: zodResolver(templateNameSchema),
+    defaultValues: { name: "", description: "" },
+  })
+
+  useEffect(() => {
+    if (isNameDialogOpen) {
+      resetTemplateName({
+        name: template.name || "",
+        description: template.description || "",
+      })
+    }
+  }, [isNameDialogOpen, resetTemplateName, template.description, template.name])
 
   const generateId = () => Math.random().toString(36).substring(2, 9)
 
@@ -553,8 +582,10 @@ export default function TicketDesignerPage() {
     }
   }
 
-  const handleSave = async () => {
-    if (!template.name) {
+  const handleSave = async (override?: Partial<TicketTemplate>) => {
+    const nextTemplate = { ...template, ...override }
+
+    if (!nextTemplate.name) {
       setIsNameDialogOpen(true)
       return
     }
@@ -565,13 +596,13 @@ export default function TicketDesignerPage() {
         await apiRequest(`/api/ticket-templates/${selectedTemplateId}`, {
           method: "PUT",
           body: {
-            name: template.name,
-            description: template.description,
+            name: nextTemplate.name,
+            description: nextTemplate.description,
             isDefault: false,
-            width: template.width,
-            height: template.height,
-            backgroundColor: template.backgroundColor,
-            elements: template.elements,
+            width: nextTemplate.width,
+            height: nextTemplate.height,
+            backgroundColor: nextTemplate.backgroundColor,
+            elements: nextTemplate.elements,
           },
         })
         refreshTemplates()
@@ -580,18 +611,19 @@ export default function TicketDesignerPage() {
         await apiRequest("/api/ticket-templates", {
           method: "POST",
           body: {
-            name: template.name,
-            description: template.description,
+            name: nextTemplate.name,
+            description: nextTemplate.description,
             isDefault: false,
-            width: template.width,
-            height: template.height,
-            backgroundColor: template.backgroundColor,
-            elements: template.elements,
+            width: nextTemplate.width,
+            height: nextTemplate.height,
+            backgroundColor: nextTemplate.backgroundColor,
+            elements: nextTemplate.elements,
           },
         })
         refreshTemplates()
         toast.success("Template created successfully")
       }
+      setTemplate(nextTemplate)
       setActiveView("list")
     } catch (error) {
       toast.error("Failed to save template")
@@ -656,6 +688,16 @@ export default function TicketDesignerPage() {
   const selectedElementData = selectedElement
     ? template.elements.find((el) => el.id === selectedElement)
     : null
+
+  const onSubmitTemplateName = handleTemplateNameSubmit((values) => {
+    const nextValues = {
+      name: values.name,
+      description: values.description || "",
+    }
+    setTemplate((prev) => ({ ...prev, ...nextValues }))
+    setIsNameDialogOpen(false)
+    handleSave(nextValues)
+  })
 
   // List View
   if (activeView === "list") {
@@ -1223,40 +1265,34 @@ export default function TicketDesignerPage() {
               Give your template a name before saving
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <form onSubmit={onSubmitTemplateName} className="space-y-4">
             <div className="grid gap-2">
               <Label>Template Name</Label>
               <Input
-                value={template.name}
-                onChange={(e) => setTemplate({ ...template, name: e.target.value })}
+                {...registerTemplateName("name")}
                 placeholder="e.g., Modern Event Ticket"
               />
+              {templateNameErrors.name && (
+                <p className="text-xs text-destructive">{templateNameErrors.name.message}</p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label>Description (optional)</Label>
               <Textarea
-                value={template.description}
-                onChange={(e) => setTemplate({ ...template, description: e.target.value })}
+                {...registerTemplateName("description")}
                 placeholder="Describe this template..."
                 rows={2}
               />
             </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsNameDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                setIsNameDialogOpen(false)
-                handleSave()
-              }}
-              disabled={!template.name}
-              className="gradient-bg"
-            >
-              Save Template
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsNameDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSavingName} className="gradient-bg">
+                {isSavingName ? "Saving..." : "Save Template"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

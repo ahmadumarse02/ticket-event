@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { desc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { ticketTemplates } from "@/lib/db/schema"
+import { logActivity } from "@/lib/activity"
 
 export const dynamic = "force-dynamic"
 
@@ -34,5 +35,16 @@ export async function POST(request: Request) {
   })
 
   const rows = await db.select().from(ticketTemplates).where(eq(ticketTemplates.id, id))
+
+  await logActivity({
+    entity: "ticket_template",
+    entityId: id,
+    action: "created",
+    summary: `Created ticket template "${body.name}"`,
+    metadata: {
+      isDefault: body.isDefault ?? false,
+    },
+  })
+
   return NextResponse.json({ ...rows[0], _id: rows[0].id }, { status: 201 })
 }

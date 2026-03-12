@@ -142,4 +142,16 @@ export const savedReports = pgTable("saved_reports", {
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 })
 
+export const activityLogs = pgTable("activity_logs", {
+  id: text("id").primaryKey(),
+  entity: text("entity").notNull(),
+  entityId: text("entity_id"),
+  action: text("action").notNull(),
+  summary: text("summary").notNull(),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  actorId: text("actor_id"),
+  actorName: text("actor_name"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+})
+
 export * from "./auth-schema"

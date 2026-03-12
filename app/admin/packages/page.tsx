@@ -6,6 +6,9 @@ import { DataTable, Column } from "@/components/admin/data-table"
 import { EmptyState } from "@/components/admin/empty-state"
 import { StatusBadge } from "@/components/admin/status-badge"
 import { Package, Gift, Ticket, Star, Edit, Trash2, MoreHorizontal, Search, Check, CalendarDays, X } from "lucide-react"
+import { useFieldArray, useForm, Controller } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -39,28 +42,36 @@ import type { MockPackage, MockEvent } from "@/lib/mock-data"
 import { useLiveData } from "@/hooks/use-live-data"
 import { apiRequest } from "@/lib/api-client"
 
-interface BundleItem {
-  priceTierName: string
-  quantity: number
-}
+const bundleItemSchema = z.object({
+  priceTierName: z.string().min(1, "Tier name is required."),
+  quantity: z
+    .string()
+    .min(1, "Quantity is required.")
+    .refine((value) => !Number.isNaN(Number(value)), "Enter a valid quantity."),
+})
 
-interface PackageFormData {
-  name: string
-  description: string
-  type: "bundle" | "pass" | "addon"
-  status: "active" | "inactive"
-  price: string
-  originalPrice: string
-  isGlobal: boolean
-  selectedEventIds: string[]
-  maxQuantity: string
-  totalAvailable: string
-  bundleItems: BundleItem[]
-  passValidDays: string
-  addonType: string
-}
+const packageSchema = z.object({
+  name: z.string().min(1, "Package name is required."),
+  description: z.string().optional(),
+  type: z.enum(["bundle", "pass", "addon"]),
+  status: z.enum(["active", "inactive"]),
+  price: z
+    .string()
+    .min(1, "Price is required.")
+    .refine((value) => !Number.isNaN(Number(value)), "Enter a valid price."),
+  originalPrice: z.string().optional(),
+  isGlobal: z.boolean(),
+  selectedEventIds: z.array(z.string()).default([]),
+  maxQuantity: z.string().optional(),
+  totalAvailable: z.string().optional(),
+  bundleItems: z.array(bundleItemSchema).default([]),
+  passValidDays: z.string().optional(),
+  addonType: z.string().optional(),
+})
 
-const initialFormData: PackageFormData = {
+type PackageFormValues = z.infer<typeof packageSchema>
+
+const packageDefaults: PackageFormValues = {
   name: "",
   description: "",
   type: "bundle",
@@ -71,7 +82,7 @@ const initialFormData: PackageFormData = {
   selectedEventIds: [],
   maxQuantity: "",
   totalAvailable: "",
-  bundleItems: [{ priceTierName: "Adult", quantity: 2 }],
+  bundleItems: [{ priceTierName: "Adult", quantity: "2" }],
   passValidDays: "",
   addonType: "",
 }
@@ -102,9 +113,29 @@ export default function PackagesPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [selectedPackage, setSelectedPackage] = useState<string | null>(null)
-  const [formData, setFormData] = useState<PackageFormData>(initialFormData)
-  const [isLoading, setIsLoading] = useState(false)
   const [eventSearch, setEventSearch] = useState("")
+
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    setValue,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<PackageFormValues>({
+    resolver: zodResolver(packageSchema),
+    defaultValues: packageDefaults,
+  })
+
+  const { fields: bundleFields, append, remove } = useFieldArray({
+    control,
+    name: "bundleItems",
+  })
+
+  const packageType = watch("type")
+  const isGlobal = watch("isGlobal")
+  const selectedEventIds = watch("selectedEventIds")
 
   const filteredEvents = useMemo(() => {
     if (!events) return []
@@ -116,13 +147,12 @@ export default function PackagesPage() {
   }, [events, eventSearch])
 
   const toggleEventSelection = (eventId: string) => {
-    const ids = formData.selectedEventIds
-    setFormData({
-      ...formData,
-      selectedEventIds: ids.includes(eventId)
-        ? ids.filter(id => id !== eventId)
-        : [...ids, eventId],
-    })
+    const ids = selectedEventIds || []
+    setValue(
+      "selectedEventIds",
+      ids.includes(eventId) ? ids.filter((id) => id !== eventId) : [...ids, eventId],
+      { shouldDirty: true }
+    )
   }
 
   const formatCurrency = (amount: number) => {
@@ -147,7 +177,7 @@ export default function PackagesPage() {
 
   const handleCreate = () => {
     setSelectedPackage(null)
-    setFormData(initialFormData)
+    reset(packageDefaults)
     setEventSearch("")
     setIsDialogOpen(true)
   }
@@ -163,7 +193,7 @@ export default function PackagesPage() {
         existingEventIds.push(pkg.eventId)
       }
 
-      setFormData({
+      reset({
         name: pkg.name,
         description: pkg.description || "",
         type: pkg.type,
@@ -174,7 +204,13 @@ export default function PackagesPage() {
         selectedEventIds: existingEventIds,
         maxQuantity: pkg.maxQuantity?.toString() || "",
         totalAvailable: pkg.totalAvailable?.toString() || "",
-        bundleItems: pkg.bundleItems || [{ priceTierName: "Adult", quantity: 2 }],
+        bundleItems:
+          pkg.bundleItems?.length > 0
+            ? pkg.bundleItems.map((item) => ({
+                priceTierName: item.priceTierName,
+                quantity: item.quantity.toString(),
+              }))
+            : [{ priceTierName: "Adult", quantity: "2" }],
         passValidDays: pkg.passValidDays?.toString() || "",
         addonType: pkg.addonType || "",
       })
@@ -204,40 +240,40 @@ export default function PackagesPage() {
     setSelectedPackage(null)
   }
 
-  const handleSubmit = async () => {
-    if (!formData.name || !formData.price) {
-      toast.error("Please fill in required fields")
-      return
-    }
-
-    setIsLoading(true)
+  const onSubmit = handleSubmit(async (values) => {
     try {
       // Resolve event associations
-      const hasSelectedEvents = !formData.isGlobal && formData.selectedEventIds.length > 0
-      const eventId = hasSelectedEvents && formData.type !== "pass"
-        ? formData.selectedEventIds[0]
+      const hasSelectedEvents = !values.isGlobal && values.selectedEventIds.length > 0
+      const eventId = hasSelectedEvents && values.type !== "pass"
+        ? values.selectedEventIds[0]
         : undefined
       const includedEventIds = hasSelectedEvents
-        ? formData.selectedEventIds
+        ? values.selectedEventIds
         : undefined
 
       const packageData = {
-        name: formData.name,
-        description: formData.description || undefined,
-        type: formData.type,
-        status: formData.status,
-        price: parseFloat(formData.price),
-        originalPrice: formData.originalPrice ? parseFloat(formData.originalPrice) : undefined,
-        isGlobal: formData.isGlobal,
+        name: values.name,
+        description: values.description || undefined,
+        type: values.type,
+        status: values.status,
+        price: parseFloat(values.price),
+        originalPrice: values.originalPrice ? parseFloat(values.originalPrice) : undefined,
+        isGlobal: values.isGlobal,
         eventId,
         includedEventIds,
-        maxQuantity: formData.maxQuantity ? parseInt(formData.maxQuantity) : undefined,
-        totalAvailable: formData.totalAvailable ? parseInt(formData.totalAvailable) : undefined,
-        bundleItems: formData.type === "bundle" ? formData.bundleItems : undefined,
-        passValidDays: formData.type === "pass" && formData.passValidDays
-          ? parseInt(formData.passValidDays)
+        maxQuantity: values.maxQuantity ? parseInt(values.maxQuantity) : undefined,
+        totalAvailable: values.totalAvailable ? parseInt(values.totalAvailable) : undefined,
+        bundleItems:
+          values.type === "bundle"
+            ? values.bundleItems.map((item) => ({
+                priceTierName: item.priceTierName,
+                quantity: parseInt(item.quantity),
+              }))
+            : undefined,
+        passValidDays: values.type === "pass" && values.passValidDays
+          ? parseInt(values.passValidDays)
           : undefined,
-        addonType: formData.type === "addon" ? formData.addonType : undefined,
+        addonType: values.type === "addon" ? values.addonType : undefined,
       }
 
       if (selectedPackage) {
@@ -257,35 +293,13 @@ export default function PackagesPage() {
       }
 
       setIsDialogOpen(false)
-      setFormData(initialFormData)
+      reset(packageDefaults)
       setSelectedPackage(null)
     } catch (error) {
       toast.error("Failed to save package")
       console.error("[PackagesPage] Save error:", error)
-    } finally {
-      setIsLoading(false)
     }
-  }
-
-  const addBundleItem = () => {
-    setFormData({
-      ...formData,
-      bundleItems: [...formData.bundleItems, { priceTierName: "", quantity: 1 }],
-    })
-  }
-
-  const removeBundleItem = (index: number) => {
-    setFormData({
-      ...formData,
-      bundleItems: formData.bundleItems.filter((_, i) => i !== index),
-    })
-  }
-
-  const updateBundleItem = (index: number, field: keyof BundleItem, value: string | number) => {
-    const newItems = [...formData.bundleItems]
-    newItems[index] = { ...newItems[index], [field]: value }
-    setFormData({ ...formData, bundleItems: newItems })
-  }
+  })
 
   const columns: Column<any>[] = [
     {
@@ -446,24 +460,25 @@ export default function PackagesPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-6">
+          <form onSubmit={onSubmit} className="space-y-6">
             {/* Basic Info */}
             <div className="space-y-4">
               <div className="grid gap-2">
                 <Label htmlFor="name">Package Name *</Label>
                 <Input
                   id="name"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  {...register("name")}
                   placeholder="e.g., Family Pack, Season Pass"
                 />
+                {errors.name && (
+                  <p className="text-xs text-destructive">{errors.name.message}</p>
+                )}
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="description">Description</Label>
                 <Textarea
                   id="description"
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  {...register("description")}
                   placeholder="Describe what's included in this package"
                   rows={3}
                 />
@@ -471,93 +486,109 @@ export default function PackagesPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
                   <Label>Package Type *</Label>
-                  <Select
-                    value={formData.type}
-                    onValueChange={(value: "bundle" | "pass" | "addon") =>
-                      setFormData({ ...formData, type: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="bundle">
-                        <div className="flex items-center gap-2">
-                          <Gift className="h-4 w-4" />
-                          Ticket Bundle
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="pass">
-                        <div className="flex items-center gap-2">
-                          <Ticket className="h-4 w-4" />
-                          Event Pass
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="addon">
-                        <div className="flex items-center gap-2">
-                          <Star className="h-4 w-4" />
-                          Add-on
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Controller
+                    control={control}
+                    name="type"
+                    render={({ field }) => (
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="bundle">
+                            <div className="flex items-center gap-2">
+                              <Gift className="h-4 w-4" />
+                              Ticket Bundle
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="pass">
+                            <div className="flex items-center gap-2">
+                              <Ticket className="h-4 w-4" />
+                              Event Pass
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="addon">
+                            <div className="flex items-center gap-2">
+                              <Star className="h-4 w-4" />
+                              Add-on
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label>Status</Label>
-                  <Select
-                    value={formData.status}
-                    onValueChange={(value: "active" | "inactive") =>
-                      setFormData({ ...formData, status: value })
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="inactive">Inactive</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Controller
+                    control={control}
+                    name="status"
+                    render={({ field }) => (
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="active">Active</SelectItem>
+                          <SelectItem value="inactive">Inactive</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
                 </div>
               </div>
             </div>
 
             {/* Type-specific options */}
-            {formData.type === "bundle" && (
+            {packageType === "bundle" && (
               <Card>
                 <CardHeader className="py-3">
                   <CardTitle className="text-sm flex items-center justify-between">
                     Bundle Contents
-                    <Button variant="outline" size="sm" onClick={addBundleItem}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => append({ priceTierName: "", quantity: "1" })}
+                    >
                       Add Item
                     </Button>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {formData.bundleItems.map((item, index) => (
-                    <div key={index} className="flex items-center gap-3">
-                      <Input
-                        value={item.priceTierName}
-                        onChange={(e) =>
-                          updateBundleItem(index, "priceTierName", e.target.value)
-                        }
-                        placeholder="Ticket type (e.g., Adult)"
-                        className="flex-1"
-                      />
-                      <Input
-                        type="number"
-                        value={item.quantity}
-                        onChange={(e) =>
-                          updateBundleItem(index, "quantity", parseInt(e.target.value) || 1)
-                        }
-                        placeholder="Qty"
-                        className="w-20"
-                      />
-                      {formData.bundleItems.length > 1 && (
+                  {bundleFields.map((item, index) => (
+                    <div key={item.id} className="flex items-center gap-3">
+                      <div className="flex-1 space-y-1">
+                        <Input
+                          {...register(`bundleItems.${index}.priceTierName`)}
+                          placeholder="Ticket type (e.g., Adult)"
+                          className="flex-1"
+                        />
+                        {errors.bundleItems?.[index]?.priceTierName && (
+                          <p className="text-xs text-destructive">
+                            {errors.bundleItems[index]?.priceTierName?.message}
+                          </p>
+                        )}
+                      </div>
+                      <div className="w-20 space-y-1">
+                        <Input
+                          type="number"
+                          {...register(`bundleItems.${index}.quantity`)}
+                          placeholder="Qty"
+                          className="w-20"
+                        />
+                        {errors.bundleItems?.[index]?.quantity && (
+                          <p className="text-xs text-destructive">
+                            {errors.bundleItems[index]?.quantity?.message}
+                          </p>
+                        )}
+                      </div>
+                      {bundleFields.length > 1 && (
                         <Button
+                          type="button"
                           variant="ghost"
                           size="icon"
-                          onClick={() => removeBundleItem(index)}
+                          onClick={() => remove(index)}
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
@@ -568,36 +599,38 @@ export default function PackagesPage() {
               </Card>
             )}
 
-            {formData.type === "pass" && (
+            {packageType === "pass" && (
               <div className="grid gap-2">
                 <Label>Pass Valid For (Days)</Label>
                 <Input
                   type="number"
-                  value={formData.passValidDays}
-                  onChange={(e) => setFormData({ ...formData, passValidDays: e.target.value })}
+                  {...register("passValidDays")}
                   placeholder="e.g., 30, 90, 365"
                 />
               </div>
             )}
 
-            {formData.type === "addon" && (
+            {packageType === "addon" && (
               <div className="grid gap-2">
                 <Label>Add-on Type</Label>
-                <Select
-                  value={formData.addonType}
-                  onValueChange={(value) => setFormData({ ...formData, addonType: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select add-on type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {addonTypes.map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {type}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Controller
+                  control={control}
+                  name="addonType"
+                  render={({ field }) => (
+                    <Select value={field.value || ""} onValueChange={field.onChange}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select add-on type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {addonTypes.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {type}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
               </div>
             )}
 
@@ -609,10 +642,12 @@ export default function PackagesPage() {
                   id="price"
                   type="number"
                   step="0.01"
-                  value={formData.price}
-                  onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                  {...register("price")}
                   placeholder="0.00"
                 />
+                {errors.price && (
+                  <p className="text-xs text-destructive">{errors.price.message}</p>
+                )}
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="originalPrice">Original Price ($)</Label>
@@ -620,8 +655,7 @@ export default function PackagesPage() {
                   id="originalPrice"
                   type="number"
                   step="0.01"
-                  value={formData.originalPrice}
-                  onChange={(e) => setFormData({ ...formData, originalPrice: e.target.value })}
+                  {...register("originalPrice")}
                   placeholder="For showing discounts"
                 />
               </div>
@@ -631,16 +665,25 @@ export default function PackagesPage() {
             <div className="space-y-4">
               {/* All-events toggle */}
               <div className="flex items-center gap-3 rounded-lg border p-3 bg-muted/30">
-                <Switch
-                  checked={formData.isGlobal}
-                  onCheckedChange={(checked) =>
-                    setFormData({ ...formData, isGlobal: checked, selectedEventIds: [] })
-                  }
+                <Controller
+                  control={control}
+                  name="isGlobal"
+                  render={({ field }) => (
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={(checked) => {
+                        field.onChange(checked)
+                        if (checked) {
+                          setValue("selectedEventIds", [], { shouldDirty: true })
+                        }
+                      }}
+                    />
+                  )}
                 />
                 <div>
                   <Label className="cursor-pointer">Available for all events</Label>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {formData.isGlobal
+                    {isGlobal
                       ? "This package will appear on every event"
                       : "Choose which events this package applies to"}
                   </p>
@@ -648,16 +691,16 @@ export default function PackagesPage() {
               </div>
 
               {/* Event picker — shown when not global */}
-              {!formData.isGlobal && (
+              {!isGlobal && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label className="flex items-center gap-1.5">
                       <CalendarDays className="h-4 w-4" />
                       Select Events
                     </Label>
-                    {formData.selectedEventIds.length > 0 && (
+                    {(selectedEventIds?.length || 0) > 0 && (
                       <span className="text-xs font-medium px-2 py-0.5 rounded-full gradient-bg text-white">
-                        {formData.selectedEventIds.length} selected
+                        {selectedEventIds.length} selected
                       </span>
                     )}
                   </div>
@@ -674,9 +717,9 @@ export default function PackagesPage() {
                   </div>
 
                   {/* Selected chips */}
-                  {formData.selectedEventIds.length > 0 && (
+                  {(selectedEventIds?.length || 0) > 0 && (
                     <div className="flex flex-wrap gap-1.5">
-                      {formData.selectedEventIds.map((id) => {
+                      {selectedEventIds.map((id) => {
                         const ev = events?.find(e => e._id === id)
                         return ev ? (
                           <span
@@ -705,7 +748,7 @@ export default function PackagesPage() {
                       </p>
                     ) : (
                       filteredEvents.map((ev) => {
-                        const isSelected = formData.selectedEventIds.includes(ev._id)
+                        const isSelected = selectedEventIds?.includes(ev._id)
                         const startDate = new Date(ev.startDate).toLocaleDateString("en-US", {
                           month: "short", day: "numeric", year: "numeric",
                         })
@@ -753,8 +796,7 @@ export default function PackagesPage() {
                   <Label>Max Per Order</Label>
                   <Input
                     type="number"
-                    value={formData.maxQuantity}
-                    onChange={(e) => setFormData({ ...formData, maxQuantity: e.target.value })}
+                    {...register("maxQuantity")}
                     placeholder="Unlimited"
                   />
                 </div>
@@ -762,25 +804,21 @@ export default function PackagesPage() {
                   <Label>Total Available</Label>
                   <Input
                     type="number"
-                    value={formData.totalAvailable}
-                    onChange={(e) =>
-                      setFormData({ ...formData, totalAvailable: e.target.value })
-                    }
+                    {...register("totalAvailable")}
                     placeholder="Unlimited"
                   />
                 </div>
               </div>
             </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={isLoading} className="gradient-bg">
-              {isLoading ? "Saving..." : selectedPackage ? "Update Package" : "Create Package"}
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting} className="gradient-bg">
+                {isSubmitting ? "Saving..." : selectedPackage ? "Update Package" : "Create Package"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

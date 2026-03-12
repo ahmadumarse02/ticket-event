@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { and, desc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { events } from "@/lib/db/schema"
+import { logActivity } from "@/lib/activity"
 
 export const dynamic = "force-dynamic"
 
@@ -75,6 +76,17 @@ export async function POST(request: Request) {
 
   await db.insert(events).values(record)
   const created = await db.select().from(events).where(eq(events.id, id))
+
+  await logActivity({
+    entity: "event",
+    entityId: id,
+    action: "created",
+    summary: `Created event "${record.name}"`,
+    metadata: {
+      status: record.status,
+      type: record.type,
+    },
+  })
 
   return NextResponse.json(
     {

@@ -16,6 +16,9 @@ import {
   BarChart,
   Filter,
 } from "lucide-react"
+import { useForm, Controller } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -53,11 +56,13 @@ type ReportType = "sales" | "customers" | "events"
 type ChartType = "bar" | "line" | "pie" | "area"
 type GroupBy = "day" | "paymentMethod" | "event"
 
-interface ReportFilters {
-  startDate: string
-  endDate: string
-  groupBy: GroupBy
-}
+const reportFilterSchema = z.object({
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  groupBy: z.enum(["day", "paymentMethod", "event"]),
+})
+
+type ReportFilters = z.infer<typeof reportFilterSchema>
 
 const initialFilters: ReportFilters = {
   startDate: "",
@@ -65,11 +70,36 @@ const initialFilters: ReportFilters = {
   groupBy: "day",
 }
 
+const reportNameSchema = z.object({
+  name: z.string().min(1, "Report name is required."),
+})
+
+type ReportNameValues = z.infer<typeof reportNameSchema>
+
 export default function ReportsPage() {
   const [activeTab, setActiveTab] = useState<ReportType>("sales")
-  const [filters, setFilters] = useState<ReportFilters>(initialFilters)
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false)
-  const [reportName, setReportName] = useState("")
+
+  const {
+    register: registerFilters,
+    control: filterControl,
+    watch: watchFilters,
+  } = useForm<ReportFilters>({
+    resolver: zodResolver(reportFilterSchema),
+    defaultValues: initialFilters,
+  })
+
+  const filters = watchFilters() || initialFilters
+
+  const {
+    register: registerReport,
+    handleSubmit: handleSaveReportSubmit,
+    reset: resetReportForm,
+    formState: { errors: reportErrors, isSubmitting: isSavingReport },
+  } = useForm<ReportNameValues>({
+    resolver: zodResolver(reportNameSchema),
+    defaultValues: { name: "" },
+  })
 
   const salesUrl = useMemo(() => {
     const params = new URLSearchParams()
@@ -99,17 +129,12 @@ export default function ReportsPage() {
     }).format(amount)
   }
 
-  const handleSaveReport = async () => {
-    if (!reportName) {
-      toast.error("Please enter a report name")
-      return
-    }
-
+  const handleSaveReport = handleSaveReportSubmit(async (values) => {
     try {
       await apiRequest("/api/reports", {
         method: "POST",
         body: {
-          name: reportName,
+          name: values.name,
           type: activeTab,
           filters: {
             dateRange:
@@ -127,12 +152,12 @@ export default function ReportsPage() {
       refreshReports()
       toast.success("Report saved successfully")
       setIsSaveDialogOpen(false)
-      setReportName("")
+      resetReportForm({ name: "" })
     } catch (error) {
       toast.error("Failed to save report")
       console.error("[ReportsPage] Save error:", error)
     }
-  }
+  })
 
   const exportReport = (type: string) => {
     let data: any[] = []
@@ -207,33 +232,34 @@ export default function ReportsPage() {
               <Label>Start Date</Label>
               <Input
                 type="date"
-                value={filters.startDate}
-                onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+                {...registerFilters("startDate")}
               />
             </div>
             <div className="grid gap-2">
               <Label>End Date</Label>
               <Input
                 type="date"
-                value={filters.endDate}
-                onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+                {...registerFilters("endDate")}
               />
             </div>
             <div className="grid gap-2">
               <Label>Group By</Label>
-              <Select
-                value={filters.groupBy}
-                onValueChange={(value: GroupBy) => setFilters({ ...filters, groupBy: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="day">Day</SelectItem>
-                  <SelectItem value="paymentMethod">Payment Method</SelectItem>
-                  <SelectItem value="event">Event</SelectItem>
-                </SelectContent>
-              </Select>
+              <Controller
+                control={filterControl}
+                name="groupBy"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="day">Day</SelectItem>
+                      <SelectItem value="paymentMethod">Payment Method</SelectItem>
+                      <SelectItem value="event">Event</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
+              />
             </div>
           </div>
         </CardContent>
@@ -555,25 +581,27 @@ export default function ReportsPage() {
               Save this report configuration for quick access later
             </DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4">
+          <form onSubmit={handleSaveReport} className="grid gap-4">
             <div className="grid gap-2">
               <Label htmlFor="reportName">Report Name</Label>
               <Input
                 id="reportName"
-                value={reportName}
-                onChange={(e) => setReportName(e.target.value)}
+                {...registerReport("name")}
                 placeholder="e.g., Monthly Sales Report"
               />
+              {reportErrors.name && (
+                <p className="text-xs text-destructive">{reportErrors.name.message}</p>
+              )}
             </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsSaveDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSaveReport} className="gradient-bg">
-              Save Report
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsSaveDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSavingReport} className="gradient-bg">
+                {isSavingReport ? "Saving..." : "Save Report"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

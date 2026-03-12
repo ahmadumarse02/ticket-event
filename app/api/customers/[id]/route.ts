@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { customers } from "@/lib/db/schema"
+import { logActivity } from "@/lib/activity"
 
 export const dynamic = "force-dynamic"
 
@@ -52,6 +53,16 @@ export async function PUT(request: Request, { params }: RouteContext) {
     return NextResponse.json({ message: "Customer not found" }, { status: 404 })
   }
 
+  await logActivity({
+    entity: "customer",
+    entityId: updated.id,
+    action: "updated",
+    summary: `Updated customer "${updated.firstName} ${updated.lastName}"`,
+    metadata: {
+      email: updated.email,
+    },
+  })
+
   return NextResponse.json({
     ...updated,
     _id: updated.id,
@@ -64,10 +75,17 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
   const deleted = await db
     .delete(customers)
     .where(eq(customers.id, id))
-    .returning({ id: customers.id })
+    .returning({ id: customers.id, firstName: customers.firstName, lastName: customers.lastName })
 
   if (!deleted.length) {
     return NextResponse.json({ message: "Customer not found" }, { status: 404 })
   }
+
+  await logActivity({
+    entity: "customer",
+    entityId: deleted[0].id,
+    action: "deleted",
+    summary: `Deleted customer "${deleted[0].firstName} ${deleted[0].lastName}"`,
+  })
   return new NextResponse(null, { status: 204 })
 }

@@ -7,6 +7,9 @@ import { DataTable, Column } from "@/components/admin/data-table"
 import { EmptyState } from "@/components/admin/empty-state"
 import { StatusBadge } from "@/components/admin/status-badge"
 import { Calendar, MapPin, Globe, Edit, Trash2, Eye, MoreHorizontal } from "lucide-react"
+import { useFieldArray, useForm, Controller } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -48,30 +51,47 @@ interface PriceTier {
   price: number
 }
 
-interface EventFormData {
-  name: string
-  description: string
-  type: "physical" | "online"
-  status: "draft" | "published" | "cancelled" | "completed"
-  venue: string
-  address: string
-  city: string
-  country: string
-  onlineUrl: string
-  onlinePlatform: string
-  startDate: string
-  startTime: string
-  endDate: string
-  endTime: string
-  capacity: string
-  isFree: boolean
-  priceTiers: PriceTier[]
-  recurrenceType: "none" | "daily" | "weekly" | "biweekly" | "monthly" | "custom"
-  recurrenceInterval: string
-  recurrenceEndDate: string
-}
+const priceTierSchema = z.object({
+  name: z.string().min(1, "Tier name is required."),
+  minAge: z.string().optional(),
+  maxAge: z.string().optional(),
+  price: z
+    .string()
+    .min(1, "Price is required.")
+    .refine((value) => !Number.isNaN(Number(value)), "Enter a valid price."),
+})
 
-const initialFormData: EventFormData = {
+const eventSchema = z
+  .object({
+    name: z.string().min(1, "Event name is required."),
+    description: z.string().optional(),
+    type: z.enum(["physical", "online"]),
+    status: z.enum(["draft", "published", "cancelled", "completed"]),
+    venue: z.string().optional(),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    country: z.string().optional(),
+    onlineUrl: z.string().optional(),
+    onlinePlatform: z.string().optional(),
+    startDate: z.string().min(1, "Start date is required."),
+    startTime: z.string().optional(),
+    endDate: z.string().min(1, "End date is required."),
+    endTime: z.string().optional(),
+    capacity: z.string().optional(),
+    isFree: z.boolean(),
+    priceTiers: z.array(priceTierSchema).default([]),
+    recurrenceType: z.enum(["none", "daily", "weekly", "biweekly", "monthly", "custom"]),
+    recurrenceInterval: z.string().optional(),
+    recurrenceEndDate: z.string().optional(),
+  })
+  .refine((data) => data.recurrenceType !== "custom" || !!data.recurrenceInterval, {
+    path: ["recurrenceInterval"],
+    message: "Enter a recurrence interval.",
+  })
+
+type EventFormValues = z.infer<typeof eventSchema>
+
+const defaultValues: EventFormValues = {
   name: "",
   description: "",
   type: "physical",
@@ -88,7 +108,7 @@ const initialFormData: EventFormData = {
   endTime: "",
   capacity: "",
   isFree: false,
-  priceTiers: [{ name: "Adult", price: 0 }],
+  priceTiers: [{ name: "Adult", minAge: "", maxAge: "", price: "0" }],
   recurrenceType: "none",
   recurrenceInterval: "",
   recurrenceEndDate: "",
@@ -104,8 +124,27 @@ export default function EventsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null)
-  const [formData, setFormData] = useState<EventFormData>(initialFormData)
-  const [isSaving, setIsSaving] = useState(false)
+
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<EventFormValues>({
+    resolver: zodResolver(eventSchema),
+    defaultValues,
+  })
+
+  const { fields: priceTierFields, append, remove } = useFieldArray({
+    control,
+    name: "priceTiers",
+  })
+
+  const eventType = watch("type")
+  const isFree = watch("isFree")
+  const recurrenceType = watch("recurrenceType")
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString("en-US", {
@@ -133,7 +172,7 @@ export default function EventsPage() {
 
   const handleCreate = () => {
     setSelectedEvent(null)
-    setFormData(initialFormData)
+    reset(defaultValues)
     setIsDialogOpen(true)
   }
 
@@ -143,7 +182,7 @@ export default function EventsPage() {
       const startDate = new Date(event.startDate)
       const endDate = new Date(event.endDate)
       
-      setFormData({
+      reset({
         name: event.name,
         description: event.description || "",
         type: event.type,
@@ -160,11 +199,19 @@ export default function EventsPage() {
         endTime: endDate.toTimeString().slice(0, 5),
         capacity: event.capacity?.toString() || "",
         isFree: event.isFree,
-        priceTiers: event.priceTiers.length > 0 ? event.priceTiers : [{ name: "Adult", price: 0 }],
+        priceTiers:
+          event.priceTiers.length > 0
+            ? event.priceTiers.map((tier) => ({
+                name: tier.name,
+                minAge: tier.minAge?.toString() || "",
+                maxAge: tier.maxAge?.toString() || "",
+                price: tier.price.toString(),
+              }))
+            : [{ name: "Adult", minAge: "", maxAge: "", price: "0" }],
         recurrenceType: event.recurrence?.type || "none",
         recurrenceInterval: event.recurrence?.interval?.toString() || "",
-        recurrenceEndDate: event.recurrence?.endDate 
-          ? new Date(event.recurrence.endDate).toISOString().split("T")[0] 
+        recurrenceEndDate: event.recurrence?.endDate
+          ? new Date(event.recurrence.endDate).toISOString().split("T")[0]
           : "",
       })
       setSelectedEvent(eventId)
@@ -192,38 +239,39 @@ export default function EventsPage() {
     setSelectedEvent(null)
   }
 
-  const handleSubmit = async () => {
-    if (!formData.name || !formData.startDate || !formData.endDate) {
-      toast.error("Please fill in required fields")
-      return
-    }
-
-    setIsSaving(true)
+  const onSubmit = handleSubmit(async (values) => {
     try {
-      const startDateTime = new Date(`${formData.startDate}T${formData.startTime || "00:00"}`).getTime()
-      const endDateTime = new Date(`${formData.endDate}T${formData.endTime || "23:59"}`).getTime()
+      const startDateTime = new Date(`${values.startDate}T${values.startTime || "00:00"}`).getTime()
+      const endDateTime = new Date(`${values.endDate}T${values.endTime || "23:59"}`).getTime()
 
       const eventData = {
-        name: formData.name,
-        description: formData.description || undefined,
-        type: formData.type,
-        status: formData.status,
-        venue: formData.type === "physical" ? formData.venue || undefined : undefined,
-        address: formData.type === "physical" ? formData.address || undefined : undefined,
-        city: formData.type === "physical" ? formData.city || undefined : undefined,
-        country: formData.type === "physical" ? formData.country || undefined : undefined,
-        onlineUrl: formData.type === "online" ? formData.onlineUrl || undefined : undefined,
-        onlinePlatform: formData.type === "online" ? formData.onlinePlatform || undefined : undefined,
+        name: values.name,
+        description: values.description || undefined,
+        type: values.type,
+        status: values.status,
+        venue: values.type === "physical" ? values.venue || undefined : undefined,
+        address: values.type === "physical" ? values.address || undefined : undefined,
+        city: values.type === "physical" ? values.city || undefined : undefined,
+        country: values.type === "physical" ? values.country || undefined : undefined,
+        onlineUrl: values.type === "online" ? values.onlineUrl || undefined : undefined,
+        onlinePlatform: values.type === "online" ? values.onlinePlatform || undefined : undefined,
         startDate: startDateTime,
         endDate: endDateTime,
-        capacity: formData.capacity ? parseInt(formData.capacity) : undefined,
-        isFree: formData.isFree,
-        priceTiers: formData.isFree ? [] : formData.priceTiers,
+        capacity: values.capacity ? parseInt(values.capacity) : undefined,
+        isFree: values.isFree,
+        priceTiers: values.isFree
+          ? []
+          : values.priceTiers.map((tier) => ({
+              name: tier.name,
+              minAge: tier.minAge ? parseInt(tier.minAge) : undefined,
+              maxAge: tier.maxAge ? parseInt(tier.maxAge) : undefined,
+              price: parseFloat(tier.price),
+            })),
         recurrence: {
-          type: formData.recurrenceType,
-          interval: formData.recurrenceInterval ? parseInt(formData.recurrenceInterval) : undefined,
-          endDate: formData.recurrenceEndDate
-            ? new Date(formData.recurrenceEndDate).getTime()
+          type: values.recurrenceType,
+          interval: values.recurrenceInterval ? parseInt(values.recurrenceInterval) : undefined,
+          endDate: values.recurrenceEndDate
+            ? new Date(values.recurrenceEndDate).getTime()
             : undefined,
         },
       }
@@ -245,35 +293,13 @@ export default function EventsPage() {
       }
 
       setIsDialogOpen(false)
-      setFormData(initialFormData)
+      reset(defaultValues)
       setSelectedEvent(null)
     } catch (error) {
       toast.error("Failed to save event")
       console.error("[EventsPage] Save error:", error)
-    } finally {
-      setIsSaving(false)
     }
-  }
-
-  const addPriceTier = () => {
-    setFormData({
-      ...formData,
-      priceTiers: [...formData.priceTiers, { name: "", price: 0 }],
-    })
-  }
-
-  const removePriceTier = (index: number) => {
-    setFormData({
-      ...formData,
-      priceTiers: formData.priceTiers.filter((_, i) => i !== index),
-    })
-  }
-
-  const updatePriceTier = (index: number, field: keyof PriceTier, value: string | number) => {
-    const newTiers = [...formData.priceTiers]
-    newTiers[index] = { ...newTiers[index], [field]: value }
-    setFormData({ ...formData, priceTiers: newTiers })
-  }
+  })
 
   const columns: Column<any>[] = [
     {
@@ -430,354 +456,349 @@ export default function EventsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <Tabs defaultValue="basic" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="basic">Basic Info</TabsTrigger>
-              <TabsTrigger value="location">Location</TabsTrigger>
-              <TabsTrigger value="pricing">Pricing</TabsTrigger>
-              <TabsTrigger value="schedule">Schedule</TabsTrigger>
-            </TabsList>
+          <form onSubmit={onSubmit} className="space-y-6">
+            <Tabs defaultValue="basic" className="w-full">
+              <TabsList className="grid w-full grid-cols-4">
+                <TabsTrigger value="basic">Basic Info</TabsTrigger>
+                <TabsTrigger value="location">Location</TabsTrigger>
+                <TabsTrigger value="pricing">Pricing</TabsTrigger>
+                <TabsTrigger value="schedule">Schedule</TabsTrigger>
+              </TabsList>
 
-            <TabsContent value="basic" className="space-y-4 mt-4">
-              <div className="grid gap-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="name">Event Name *</Label>
-                  <Input
-                    id="name"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="Enter event name"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="description">Description</Label>
-                  <Textarea
-                    id="description"
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    placeholder="Describe your event"
-                    rows={4}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label>Event Type</Label>
-                    <Select
-                      value={formData.type}
-                      onValueChange={(value: "physical" | "online") =>
-                        setFormData({ ...formData, type: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="physical">Physical Event</SelectItem>
-                        <SelectItem value="online">Online Event</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Status</Label>
-                    <Select
-                      value={formData.status}
-                      onValueChange={(value: "draft" | "published" | "cancelled" | "completed") =>
-                        setFormData({ ...formData, status: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="draft">Draft</SelectItem>
-                        <SelectItem value="published">Published</SelectItem>
-                        <SelectItem value="cancelled">Cancelled</SelectItem>
-                        <SelectItem value="completed">Completed</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="capacity">Capacity</Label>
-                  <Input
-                    id="capacity"
-                    type="number"
-                    value={formData.capacity}
-                    onChange={(e) => setFormData({ ...formData, capacity: e.target.value })}
-                    placeholder="Maximum attendees (leave empty for unlimited)"
-                  />
-                </div>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="location" className="space-y-4 mt-4">
-              {formData.type === "physical" ? (
+              <TabsContent value="basic" className="space-y-4 mt-4">
                 <div className="grid gap-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="venue">Venue Name</Label>
+                    <Label htmlFor="name">Event Name *</Label>
                     <Input
-                      id="venue"
-                      value={formData.venue}
-                      onChange={(e) => setFormData({ ...formData, venue: e.target.value })}
-                      placeholder="Enter venue name"
+                      id="name"
+                      {...register("name")}
+                      placeholder="Enter event name"
                     />
+                    {errors.name && (
+                      <p className="text-xs text-destructive">{errors.name.message}</p>
+                    )}
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="address">Address</Label>
-                    <Input
-                      id="address"
-                      value={formData.address}
-                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                      placeholder="Enter street address"
+                    <Label htmlFor="description">Description</Label>
+                    <Textarea
+                      id="description"
+                      {...register("description")}
+                      placeholder="Describe your event"
+                      rows={4}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="grid gap-2">
-                      <Label htmlFor="city">City</Label>
-                      <Input
-                        id="city"
-                        value={formData.city}
-                        onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                        placeholder="Enter city"
+                      <Label>Event Type</Label>
+                      <Controller
+                        control={control}
+                        name="type"
+                        render={({ field }) => (
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="physical">Physical Event</SelectItem>
+                              <SelectItem value="online">Online Event</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
                       />
                     </div>
                     <div className="grid gap-2">
-                      <Label htmlFor="country">Country</Label>
-                      <Input
-                        id="country"
-                        value={formData.country}
-                        onChange={(e) => setFormData({ ...formData, country: e.target.value })}
-                        placeholder="Enter country"
+                      <Label>Status</Label>
+                      <Controller
+                        control={control}
+                        name="status"
+                        render={({ field }) => (
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="draft">Draft</SelectItem>
+                              <SelectItem value="published">Published</SelectItem>
+                              <SelectItem value="cancelled">Cancelled</SelectItem>
+                              <SelectItem value="completed">Completed</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
                       />
                     </div>
                   </div>
-                </div>
-              ) : (
-                <div className="grid gap-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="onlinePlatform">Platform</Label>
-                    <Select
-                      value={formData.onlinePlatform}
-                      onValueChange={(value) =>
-                        setFormData({ ...formData, onlinePlatform: value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select platform" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="zoom">Zoom</SelectItem>
-                        <SelectItem value="teams">Microsoft Teams</SelectItem>
-                        <SelectItem value="meet">Google Meet</SelectItem>
-                        <SelectItem value="webex">Webex</SelectItem>
-                        <SelectItem value="custom">Custom URL</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor="onlineUrl">Event URL</Label>
+                    <Label htmlFor="capacity">Capacity</Label>
                     <Input
-                      id="onlineUrl"
-                      value={formData.onlineUrl}
-                      onChange={(e) => setFormData({ ...formData, onlineUrl: e.target.value })}
-                      placeholder="https://..."
+                      id="capacity"
+                      type="number"
+                      {...register("capacity")}
+                      placeholder="Maximum attendees (leave empty for unlimited)"
                     />
                   </div>
                 </div>
-              )}
-            </TabsContent>
+              </TabsContent>
 
-            <TabsContent value="pricing" className="space-y-4 mt-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Switch
-                    checked={formData.isFree}
-                    onCheckedChange={(checked) =>
-                      setFormData({ ...formData, isFree: checked })
-                    }
-                  />
-                  <Label>This is a free event</Label>
-                </div>
-                {!formData.isFree && (
-                  <Button variant="outline" onClick={addPriceTier}>
-                    Add Price Tier
-                  </Button>
+              <TabsContent value="location" className="space-y-4 mt-4">
+                {eventType === "physical" ? (
+                  <div className="grid gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="venue">Venue Name</Label>
+                      <Input
+                        id="venue"
+                        {...register("venue")}
+                        placeholder="Enter venue name"
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="address">Address</Label>
+                      <Input
+                        id="address"
+                        {...register("address")}
+                        placeholder="Enter street address"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <Label htmlFor="city">City</Label>
+                        <Input
+                          id="city"
+                          {...register("city")}
+                          placeholder="Enter city"
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <Label htmlFor="country">Country</Label>
+                        <Input
+                          id="country"
+                          {...register("country")}
+                          placeholder="Enter country"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="onlinePlatform">Platform</Label>
+                      <Controller
+                        control={control}
+                        name="onlinePlatform"
+                        render={({ field }) => (
+                          <Select value={field.value || ""} onValueChange={field.onChange}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select platform" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="zoom">Zoom</SelectItem>
+                              <SelectItem value="teams">Microsoft Teams</SelectItem>
+                              <SelectItem value="meet">Google Meet</SelectItem>
+                              <SelectItem value="webex">Webex</SelectItem>
+                              <SelectItem value="custom">Custom URL</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="onlineUrl">Event URL</Label>
+                      <Input
+                        id="onlineUrl"
+                        {...register("onlineUrl")}
+                        placeholder="https://..."
+                      />
+                    </div>
+                  </div>
                 )}
-              </div>
+              </TabsContent>
 
-              {!formData.isFree && (
-                <div className="space-y-4">
-                  {formData.priceTiers.map((tier, index) => (
-                    <Card key={index}>
-                      <CardHeader className="py-3">
-                        <CardTitle className="text-sm flex items-center justify-between">
-                          Price Tier {index + 1}
-                          {formData.priceTiers.length > 1 && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => removePriceTier(index)}
-                              className="text-destructive"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="py-2 grid grid-cols-4 gap-4">
-                        <div className="grid gap-2">
-                          <Label>Tier Name</Label>
-                          <Input
-                            value={tier.name}
-                            onChange={(e) => updatePriceTier(index, "name", e.target.value)}
-                            placeholder="e.g., Adult, Child"
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>Min Age</Label>
-                          <Input
-                            type="number"
-                            value={tier.minAge || ""}
-                            onChange={(e) =>
-                              updatePriceTier(index, "minAge", parseInt(e.target.value) || 0)
-                            }
-                            placeholder="0"
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>Max Age</Label>
-                          <Input
-                            type="number"
-                            value={tier.maxAge || ""}
-                            onChange={(e) =>
-                              updatePriceTier(index, "maxAge", parseInt(e.target.value) || 0)
-                            }
-                            placeholder="99"
-                          />
-                        </div>
-                        <div className="grid gap-2">
-                          <Label>Price ($)</Label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            value={tier.price}
-                            onChange={(e) =>
-                              updatePriceTier(index, "price", parseFloat(e.target.value) || 0)
-                            }
-                            placeholder="0.00"
-                          />
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="schedule" className="space-y-4 mt-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="startDate">Start Date *</Label>
-                  <Input
-                    id="startDate"
-                    type="date"
-                    value={formData.startDate}
-                    onChange={(e) => setFormData({ ...formData, startDate: e.target.value })}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="startTime">Start Time</Label>
-                  <Input
-                    id="startTime"
-                    type="time"
-                    value={formData.startTime}
-                    onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="endDate">End Date *</Label>
-                  <Input
-                    id="endDate"
-                    type="date"
-                    value={formData.endDate}
-                    onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="endTime">End Time</Label>
-                  <Input
-                    id="endTime"
-                    type="time"
-                    value={formData.endTime}
-                    onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
-                  />
-                </div>
-              </div>
-
-              <div className="pt-4 border-t">
-                <h4 className="font-medium mb-4">Recurring Event</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="grid gap-2">
-                    <Label>Recurrence Pattern</Label>
-                    <Select
-                      value={formData.recurrenceType}
-                      onValueChange={(value: any) =>
-                        setFormData({ ...formData, recurrenceType: value })
+              <TabsContent value="pricing" className="space-y-4 mt-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Controller
+                      control={control}
+                      name="isFree"
+                      render={({ field }) => (
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      )}
+                    />
+                    <Label>This is a free event</Label>
+                  </div>
+                  {!isFree && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() =>
+                        append({ name: "", minAge: "", maxAge: "", price: "0" })
                       }
                     >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No Recurrence</SelectItem>
-                        <SelectItem value="daily">Daily</SelectItem>
-                        <SelectItem value="weekly">Weekly</SelectItem>
-                        <SelectItem value="biweekly">Bi-weekly</SelectItem>
-                        <SelectItem value="monthly">Monthly</SelectItem>
-                        <SelectItem value="custom">Custom Interval</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      Add Price Tier
+                    </Button>
+                  )}
+                </div>
+
+                {!isFree && (
+                  <div className="space-y-4">
+                    {priceTierFields.map((tier, index) => (
+                      <Card key={tier.id}>
+                        <CardHeader className="py-3">
+                          <CardTitle className="text-sm flex items-center justify-between">
+                            Price Tier {index + 1}
+                            {priceTierFields.length > 1 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => remove(index)}
+                                className="text-destructive"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </CardTitle>
+                        </CardHeader>
+                        <CardContent className="py-2 grid grid-cols-4 gap-4">
+                          <div className="grid gap-2">
+                            <Label>Tier Name</Label>
+                            <Input
+                              {...register(`priceTiers.${index}.name`)}
+                              placeholder="e.g., Adult, Child"
+                            />
+                            {errors.priceTiers?.[index]?.name && (
+                              <p className="text-xs text-destructive">
+                                {errors.priceTiers[index]?.name?.message}
+                              </p>
+                            )}
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>Min Age</Label>
+                            <Input
+                              type="number"
+                              {...register(`priceTiers.${index}.minAge`)}
+                              placeholder="0"
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>Max Age</Label>
+                            <Input
+                              type="number"
+                              {...register(`priceTiers.${index}.maxAge`)}
+                              placeholder="99"
+                            />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>Price ($)</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              {...register(`priceTiers.${index}.price`)}
+                              placeholder="0.00"
+                            />
+                            {errors.priceTiers?.[index]?.price && (
+                              <p className="text-xs text-destructive">
+                                {errors.priceTiers[index]?.price?.message}
+                              </p>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
                   </div>
-                  {formData.recurrenceType === "custom" && (
+                )}
+              </TabsContent>
+
+              <TabsContent value="schedule" className="space-y-4 mt-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="startDate">Start Date *</Label>
+                    <Input id="startDate" type="date" {...register("startDate")} />
+                    {errors.startDate && (
+                      <p className="text-xs text-destructive">{errors.startDate.message}</p>
+                    )}
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="startTime">Start Time</Label>
+                    <Input id="startTime" type="time" {...register("startTime")} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="grid gap-2">
+                    <Label htmlFor="endDate">End Date *</Label>
+                    <Input id="endDate" type="date" {...register("endDate")} />
+                    {errors.endDate && (
+                      <p className="text-xs text-destructive">{errors.endDate.message}</p>
+                    )}
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="endTime">End Time</Label>
+                    <Input id="endTime" type="time" {...register("endTime")} />
+                  </div>
+                </div>
+
+                <div className="pt-4 border-t">
+                  <h4 className="font-medium mb-4">Recurring Event</h4>
+                  <div className="grid grid-cols-2 gap-4">
                     <div className="grid gap-2">
-                      <Label>Every X Days</Label>
-                      <Input
-                        type="number"
-                        value={formData.recurrenceInterval}
-                        onChange={(e) =>
-                          setFormData({ ...formData, recurrenceInterval: e.target.value })
-                        }
-                        placeholder="e.g., 3"
+                      <Label>Recurrence Pattern</Label>
+                      <Controller
+                        control={control}
+                        name="recurrenceType"
+                        render={({ field }) => (
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">No Recurrence</SelectItem>
+                              <SelectItem value="daily">Daily</SelectItem>
+                              <SelectItem value="weekly">Weekly</SelectItem>
+                              <SelectItem value="biweekly">Bi-weekly</SelectItem>
+                              <SelectItem value="monthly">Monthly</SelectItem>
+                              <SelectItem value="custom">Custom Interval</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        )}
                       />
+                    </div>
+                    {recurrenceType === "custom" && (
+                      <div className="grid gap-2">
+                        <Label>Every X Days</Label>
+                        <Input
+                          type="number"
+                          {...register("recurrenceInterval")}
+                          placeholder="e.g., 3"
+                        />
+                        {errors.recurrenceInterval && (
+                          <p className="text-xs text-destructive">
+                            {errors.recurrenceInterval.message}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {recurrenceType !== "none" && (
+                    <div className="grid gap-2 mt-4">
+                      <Label>Recurrence End Date</Label>
+                      <Input type="date" {...register("recurrenceEndDate")} />
                     </div>
                   )}
                 </div>
-                {formData.recurrenceType !== "none" && (
-                  <div className="grid gap-2 mt-4">
-                    <Label>Recurrence End Date</Label>
-                    <Input
-                      type="date"
-                      value={formData.recurrenceEndDate}
-                      onChange={(e) =>
-                        setFormData({ ...formData, recurrenceEndDate: e.target.value })
-                      }
-                    />
-                  </div>
-                )}
-              </div>
-            </TabsContent>
-          </Tabs>
+              </TabsContent>
+            </Tabs>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={isSaving} className="gradient-bg">
-              {isSaving ? "Saving..." : selectedEvent ? "Update Event" : "Create Event"}
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting} className="gradient-bg">
+                {isSubmitting ? "Saving..." : selectedEvent ? "Update Event" : "Create Event"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

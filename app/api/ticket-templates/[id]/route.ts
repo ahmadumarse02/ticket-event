@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { ticketTemplates } from "@/lib/db/schema"
+import { logActivity } from "@/lib/activity"
 
 export const dynamic = "force-dynamic"
 
@@ -44,6 +45,16 @@ export async function PUT(request: Request, { params }: RouteContext) {
     return NextResponse.json({ message: "Template not found" }, { status: 404 })
   }
 
+  await logActivity({
+    entity: "ticket_template",
+    entityId: updated.id,
+    action: "updated",
+    summary: `Updated ticket template "${updated.name}"`,
+    metadata: {
+      isDefault: updated.isDefault,
+    },
+  })
+
   return NextResponse.json({ ...updated, _id: updated.id })
 }
 
@@ -52,10 +63,17 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
   const deleted = await db
     .delete(ticketTemplates)
     .where(eq(ticketTemplates.id, id))
-    .returning({ id: ticketTemplates.id })
+    .returning({ id: ticketTemplates.id, name: ticketTemplates.name })
 
   if (!deleted.length) {
     return NextResponse.json({ message: "Template not found" }, { status: 404 })
   }
+
+  await logActivity({
+    entity: "ticket_template",
+    entityId: deleted[0].id,
+    action: "deleted",
+    summary: `Deleted ticket template "${deleted[0].name}"`,
+  })
   return new NextResponse(null, { status: 204 })
 }

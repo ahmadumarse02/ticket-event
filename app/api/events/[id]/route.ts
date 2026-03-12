@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { events } from "@/lib/db/schema"
+import { logActivity } from "@/lib/activity"
 
 export const dynamic = "force-dynamic"
 
@@ -61,6 +62,17 @@ export async function PUT(request: Request, { params }: RouteContext) {
     return NextResponse.json({ message: "Event not found" }, { status: 404 })
   }
 
+  await logActivity({
+    entity: "event",
+    entityId: updated.id,
+    action: "updated",
+    summary: `Updated event "${updated.name}"`,
+    metadata: {
+      status: updated.status,
+      type: updated.type,
+    },
+  })
+
   return NextResponse.json({
     ...updated,
     _id: updated.id,
@@ -79,10 +91,17 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
   const deleted = await db
     .delete(events)
     .where(eq(events.id, id))
-    .returning({ id: events.id })
+    .returning({ id: events.id, name: events.name })
 
   if (!deleted.length) {
     return NextResponse.json({ message: "Event not found" }, { status: 404 })
   }
+
+  await logActivity({
+    entity: "event",
+    entityId: deleted[0].id,
+    action: "deleted",
+    summary: `Deleted event "${deleted[0].name}"`,
+  })
   return new NextResponse(null, { status: 204 })
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { PageHeader } from "@/components/admin/page-header"
 import { DataTable, Column } from "@/components/admin/data-table"
 import { EmptyState } from "@/components/admin/empty-state"
@@ -20,6 +20,9 @@ import {
   Wallet,
   X,
 } from "lucide-react"
+import { useForm, Controller } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -54,14 +57,16 @@ import type { MockTransaction } from "@/lib/mock-data"
 import { useLiveData } from "@/hooks/use-live-data"
 import { apiRequest } from "@/lib/api-client"
 
-interface TransactionFilters {
-  status: string
-  paymentMethod: string
-  startDate: string
-  endDate: string
-  minAmount: string
-  maxAmount: string
-}
+const filterSchema = z.object({
+  status: z.string(),
+  paymentMethod: z.string(),
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  minAmount: z.string().optional(),
+  maxAmount: z.string().optional(),
+})
+
+type TransactionFilters = z.infer<typeof filterSchema>
 
 const initialFilters: TransactionFilters = {
   status: "all",
@@ -71,6 +76,15 @@ const initialFilters: TransactionFilters = {
   minAmount: "",
   maxAmount: "",
 }
+
+const refundSchema = z.object({
+  amount: z
+    .string()
+    .min(1, "Refund amount is required.")
+    .refine((value) => !Number.isNaN(Number(value)) && Number(value) > 0, "Enter a valid amount."),
+})
+
+type RefundFormValues = z.infer<typeof refundSchema>
 
 const paymentMethods = [
   { value: "card", label: "Card", icon: CreditCard },
@@ -93,8 +107,40 @@ export default function TransactionsPage() {
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<any>(null)
   const [isRefundDialogOpen, setIsRefundDialogOpen] = useState(false)
-  const [refundAmount, setRefundAmount] = useState("")
   const [isFiltersOpen, setIsFiltersOpen] = useState(false)
+
+  const {
+    register: registerFilters,
+    control: filterControl,
+    handleSubmit: handleFilterSubmit,
+    reset: resetFilters,
+    formState: { isSubmitting: isFilterSubmitting },
+  } = useForm<TransactionFilters>({
+    resolver: zodResolver(filterSchema),
+    defaultValues: initialFilters,
+  })
+
+  const {
+    register: registerRefund,
+    handleSubmit: handleRefundSubmit,
+    reset: resetRefund,
+    formState: { errors: refundErrors, isSubmitting: isRefundSubmitting },
+  } = useForm<RefundFormValues>({
+    resolver: zodResolver(refundSchema),
+    defaultValues: { amount: "" },
+  })
+
+  useEffect(() => {
+    resetFilters(filters)
+  }, [filters, resetFilters])
+
+  useEffect(() => {
+    if (isRefundDialogOpen) {
+      resetRefund({
+        amount: selectedTransaction?.total ? selectedTransaction.total.toString() : "",
+      })
+    }
+  }, [isRefundDialogOpen, resetRefund, selectedTransaction])
 
   const transactionsUrl = useMemo(() => {
     const params = new URLSearchParams()
@@ -151,15 +197,13 @@ export default function TransactionsPage() {
 
   const handleRefund = (transaction: any) => {
     setSelectedTransaction(transaction)
-    setRefundAmount(transaction.total.toString())
     setIsRefundDialogOpen(true)
   }
 
-  const processRefund = async () => {
-    if (!selectedTransaction || !refundAmount) return
-
+  const processRefund = handleRefundSubmit(async (values) => {
+    if (!selectedTransaction) return
     try {
-      const amount = parseFloat(refundAmount)
+      const amount = parseFloat(values.amount)
       const isFullRefund = amount >= selectedTransaction.total
 
       await apiRequest(`/api/transactions/${selectedTransaction._id}`, {
@@ -173,18 +217,24 @@ export default function TransactionsPage() {
 
       toast.success(isFullRefund ? "Full refund processed" : "Partial refund processed")
       setIsRefundDialogOpen(false)
-      setRefundAmount("")
+      resetRefund({ amount: "" })
       setSelectedTransaction(null)
     } catch (error) {
       toast.error("Failed to process refund")
       console.error("[TransactionsPage] Refund error:", error)
     }
-  }
+  })
 
   const clearFilters = () => {
     setFilters(initialFilters)
+    resetFilters(initialFilters)
     toast.success("Filters cleared")
   }
+
+  const applyFilters = handleFilterSubmit((values) => {
+    setFilters(values)
+    setIsFiltersOpen(false)
+  })
 
   const hasActiveFilters = Object.values(filters).some((v) => v !== "" && v !== "all")
 
@@ -333,45 +383,51 @@ export default function TransactionsPage() {
                 Apply filters to narrow down your transaction list
               </SheetDescription>
             </SheetHeader>
-            <div className="mt-6 space-y-6">
+            <form onSubmit={applyFilters} className="mt-6 space-y-6">
               <div className="space-y-2">
                 <Label>Status</Label>
-                <Select
-                  value={filters.status}
-                  onValueChange={(value) => setFilters({ ...filters, status: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All statuses" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All statuses</SelectItem>
-                    {statuses.map((status) => (
-                      <SelectItem key={status.value} value={status.value}>
-                        {status.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Controller
+                  control={filterControl}
+                  name="status"
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All statuses" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        {statuses.map((status) => (
+                          <SelectItem key={status.value} value={status.value}>
+                            {status.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
               </div>
 
               <div className="space-y-2">
                 <Label>Payment Method</Label>
-                <Select
-                  value={filters.paymentMethod}
-                  onValueChange={(value) => setFilters({ ...filters, paymentMethod: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="All methods" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All methods</SelectItem>
-                    {paymentMethods.map((method) => (
-                      <SelectItem key={method.value} value={method.value}>
-                        {method.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Controller
+                  control={filterControl}
+                  name="paymentMethod"
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All methods" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All methods</SelectItem>
+                        {paymentMethods.map((method) => (
+                          <SelectItem key={method.value} value={method.value}>
+                            {method.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
               </div>
 
               <div className="space-y-2">
@@ -379,14 +435,12 @@ export default function TransactionsPage() {
                 <div className="grid grid-cols-2 gap-2">
                   <Input
                     type="date"
-                    value={filters.startDate}
-                    onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+                    {...registerFilters("startDate")}
                     placeholder="Start date"
                   />
                   <Input
                     type="date"
-                    value={filters.endDate}
-                    onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+                    {...registerFilters("endDate")}
                     placeholder="End date"
                   />
                 </div>
@@ -397,14 +451,12 @@ export default function TransactionsPage() {
                 <div className="grid grid-cols-2 gap-2">
                   <Input
                     type="number"
-                    value={filters.minAmount}
-                    onChange={(e) => setFilters({ ...filters, minAmount: e.target.value })}
+                    {...registerFilters("minAmount")}
                     placeholder="Min"
                   />
                   <Input
                     type="number"
-                    value={filters.maxAmount}
-                    onChange={(e) => setFilters({ ...filters, maxAmount: e.target.value })}
+                    {...registerFilters("maxAmount")}
                     placeholder="Max"
                   />
                 </div>
@@ -412,6 +464,7 @@ export default function TransactionsPage() {
 
               <div className="flex gap-2">
                 <Button
+                  type="button"
                   variant="outline"
                   onClick={clearFilters}
                   disabled={!hasActiveFilters}
@@ -421,13 +474,14 @@ export default function TransactionsPage() {
                   Clear
                 </Button>
                 <Button
-                  onClick={() => setIsFiltersOpen(false)}
+                  type="submit"
+                  disabled={isFilterSubmitting}
                   className="flex-1 gradient-bg"
                 >
                   Apply Filters
                 </Button>
               </div>
-            </div>
+            </form>
           </SheetContent>
         </Sheet>
 
@@ -628,7 +682,7 @@ export default function TransactionsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
+          <form onSubmit={processRefund} className="space-y-4">
             <div className="rounded-lg bg-secondary p-4">
               <p className="text-sm text-muted-foreground">Transaction Total</p>
               <p className="text-2xl font-bold">
@@ -642,24 +696,30 @@ export default function TransactionsPage() {
                 id="refundAmount"
                 type="number"
                 step="0.01"
-                value={refundAmount}
-                onChange={(e) => setRefundAmount(e.target.value)}
+                {...registerRefund("amount")}
                 max={selectedTransaction?.total}
               />
+              {refundErrors.amount && (
+                <p className="text-xs text-destructive">{refundErrors.amount.message}</p>
+              )}
               <p className="text-xs text-muted-foreground">
                 Enter the full amount for a complete refund, or a partial amount
               </p>
             </div>
-          </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsRefundDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={processRefund} variant="destructive">
-              Process Refund
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsRefundDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" variant="destructive" disabled={isRefundSubmitting}>
+                {isRefundSubmitting ? "Processing..." : "Process Refund"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

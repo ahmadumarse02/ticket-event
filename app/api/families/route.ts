@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { desc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { customers, families } from "@/lib/db/schema"
+import { logActivity } from "@/lib/activity"
 
 export const dynamic = "force-dynamic"
 
@@ -36,5 +37,16 @@ export async function POST(request: Request) {
   }
 
   const rows = await db.select().from(families).where(eq(families.id, id))
+
+  await logActivity({
+    entity: "family",
+    entityId: id,
+    action: "created",
+    summary: `Created family "${body.name}"`,
+    metadata: {
+      headCustomerId: body.headCustomerId ?? null,
+    },
+  })
+
   return NextResponse.json({ ...rows[0], _id: rows[0].id }, { status: 201 })
 }

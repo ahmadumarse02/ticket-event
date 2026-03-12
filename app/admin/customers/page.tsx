@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { PageHeader } from "@/components/admin/page-header"
 import { DataTable, Column } from "@/components/admin/data-table"
 import { EmptyState } from "@/components/admin/empty-state"
@@ -19,6 +19,9 @@ import {
   DollarSign,
   Ticket,
 } from "lucide-react"
+import { useForm, Controller } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -54,22 +57,24 @@ import type { MockCustomer, MockFamily } from "@/lib/mock-data"
 import { useLiveData } from "@/hooks/use-live-data"
 import { apiRequest } from "@/lib/api-client"
 
-interface CustomerFormData {
-  firstName: string
-  lastName: string
-  email: string
-  phone: string
-  dateOfBirth: string
-  address: string
-  city: string
-  country: string
-  postalCode: string
-  notes: string
-  familyId: string
-  relationshipToHead: string
-}
+const customerSchema = z.object({
+  firstName: z.string().min(1, "First name is required."),
+  lastName: z.string().min(1, "Last name is required."),
+  email: z.string().email("Enter a valid email address."),
+  phone: z.string().optional(),
+  dateOfBirth: z.string().optional(),
+  address: z.string().optional(),
+  city: z.string().optional(),
+  country: z.string().optional(),
+  postalCode: z.string().optional(),
+  notes: z.string().optional(),
+  familyId: z.string().optional(),
+  relationshipToHead: z.string().optional(),
+})
 
-const initialFormData: CustomerFormData = {
+type CustomerFormValues = z.infer<typeof customerSchema>
+
+const customerDefaults: CustomerFormValues = {
   firstName: "",
   lastName: "",
   email: "",
@@ -82,6 +87,18 @@ const initialFormData: CustomerFormData = {
   notes: "",
   familyId: "",
   relationshipToHead: "",
+}
+
+const familySchema = z.object({
+  name: z.string().min(1, "Family name is required."),
+  headCustomerId: z.string().min(1, "Select a head of family."),
+})
+
+type FamilyFormValues = z.infer<typeof familySchema>
+
+const familyDefaults: FamilyFormValues = {
+  name: "",
+  headCustomerId: "",
 }
 
 const relationships = ["head", "spouse", "child", "parent", "sibling", "other"]
@@ -120,10 +137,39 @@ export default function CustomersPage() {
   const [isFamilyDialogOpen, setIsFamilyDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [selectedCustomer, setSelectedCustomer] = useState<string | null>(null)
-  const [formData, setFormData] = useState<CustomerFormData>(initialFormData)
-  const [familyName, setFamilyName] = useState("")
-  const [familyHeadId, setFamilyHeadId] = useState<string>("")
-  const [isLoading, setIsLoading] = useState(false)
+
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    setValue,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<CustomerFormValues>({
+    resolver: zodResolver(customerSchema),
+    defaultValues: customerDefaults,
+  })
+
+  const {
+    register: registerFamily,
+    control: familyControl,
+    handleSubmit: handleFamilySubmit,
+    reset: resetFamily,
+    formState: { errors: familyErrors, isSubmitting: isFamilySubmitting },
+  } = useForm<FamilyFormValues>({
+    resolver: zodResolver(familySchema),
+    defaultValues: familyDefaults,
+  })
+
+  const familyId = watch("familyId")
+  const dateOfBirth = watch("dateOfBirth")
+
+  useEffect(() => {
+    if (!familyId) {
+      setValue("relationshipToHead", "")
+    }
+  }, [familyId, setValue])
 
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat("en-US", {
@@ -150,14 +196,14 @@ export default function CustomersPage() {
 
   const handleCreate = () => {
     setSelectedCustomer(null)
-    setFormData(initialFormData)
+    reset(customerDefaults)
     setIsDialogOpen(true)
   }
 
   const handleEdit = (customerId: string) => {
     const customer = customers?.find((c) => c._id === customerId)
     if (customer) {
-      setFormData({
+      reset({
         firstName: customer.firstName,
         lastName: customer.lastName,
         email: customer.email,
@@ -198,32 +244,26 @@ export default function CustomersPage() {
     setSelectedCustomer(null)
   }
 
-  const handleSubmit = async () => {
-    if (!formData.firstName || !formData.lastName || !formData.email) {
-      toast.error("Please fill in required fields")
-      return
-    }
-
-    setIsLoading(true)
+  const onSubmit = handleSubmit(async (values) => {
     try {
-      const age = formData.dateOfBirth ? calculateAge(formData.dateOfBirth) : undefined
+      const age = values.dateOfBirth ? calculateAge(values.dateOfBirth) : undefined
 
       const customerData = {
-        firstName: formData.firstName,
-        lastName: formData.lastName,
-        email: formData.email,
-        phone: formData.phone || undefined,
-        dateOfBirth: formData.dateOfBirth
-          ? new Date(formData.dateOfBirth).getTime()
+        firstName: values.firstName,
+        lastName: values.lastName,
+        email: values.email,
+        phone: values.phone || undefined,
+        dateOfBirth: values.dateOfBirth
+          ? new Date(values.dateOfBirth).getTime()
           : undefined,
         age: age || undefined,
-        address: formData.address || undefined,
-        city: formData.city || undefined,
-        country: formData.country || undefined,
-        postalCode: formData.postalCode || undefined,
-        notes: formData.notes || undefined,
-        familyId: formData.familyId || undefined,
-        relationshipToHead: formData.relationshipToHead || undefined,
+        address: values.address || undefined,
+        city: values.city || undefined,
+        country: values.country || undefined,
+        postalCode: values.postalCode || undefined,
+        notes: values.notes || undefined,
+        familyId: values.familyId || undefined,
+        relationshipToHead: values.relationshipToHead || undefined,
       }
 
       if (selectedCustomer) {
@@ -243,44 +283,33 @@ export default function CustomersPage() {
       }
 
       setIsDialogOpen(false)
-      setFormData(initialFormData)
+      reset(customerDefaults)
       setSelectedCustomer(null)
     } catch (error) {
       toast.error("Failed to save customer")
       console.error("[CustomersPage] Save error:", error)
-    } finally {
-      setIsLoading(false)
     }
-  }
+  })
 
-  const handleCreateFamily = async () => {
-    if (!familyName || !familyHeadId) {
-      toast.error("Please fill in all fields")
-      return
-    }
-
-    setIsLoading(true)
+  const onCreateFamily = handleFamilySubmit(async (values) => {
     try {
       await apiRequest("/api/families", {
         method: "POST",
         body: {
-          name: familyName,
-          headCustomerId: familyHeadId,
+          name: values.name,
+          headCustomerId: values.headCustomerId,
         },
       })
       refreshFamilies()
       refreshCustomers()
       toast.success("Family created successfully")
       setIsFamilyDialogOpen(false)
-      setFamilyName("")
-      setFamilyHeadId("")
+      resetFamily(familyDefaults)
     } catch (error) {
       toast.error("Failed to create family")
       console.error("[CustomersPage] Create family error:", error)
-    } finally {
-      setIsLoading(false)
     }
-  }
+  })
 
   const customerColumns: Column<any>[] = [
     {
@@ -541,28 +570,24 @@ export default function CustomersPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-6">
+          <form onSubmit={onSubmit} className="space-y-6">
             {/* Personal Info */}
             <div className="space-y-4">
               <h4 className="font-medium">Personal Information</h4>
               <div className="grid grid-cols-2 gap-4">
                 <div className="grid gap-2">
                   <Label htmlFor="firstName">First Name *</Label>
-                  <Input
-                    id="firstName"
-                    value={formData.firstName}
-                    onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
-                    placeholder="John"
-                  />
+                  <Input id="firstName" {...register("firstName")} placeholder="John" />
+                  {errors.firstName && (
+                    <p className="text-xs text-destructive">{errors.firstName.message}</p>
+                  )}
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="lastName">Last Name *</Label>
-                  <Input
-                    id="lastName"
-                    value={formData.lastName}
-                    onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
-                    placeholder="Doe"
-                  />
+                  <Input id="lastName" {...register("lastName")} placeholder="Doe" />
+                  {errors.lastName && (
+                    <p className="text-xs text-destructive">{errors.lastName.message}</p>
+                  )}
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -571,32 +596,24 @@ export default function CustomersPage() {
                   <Input
                     id="email"
                     type="email"
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                    {...register("email")}
                     placeholder="john@example.com"
                   />
+                  {errors.email && (
+                    <p className="text-xs text-destructive">{errors.email.message}</p>
+                  )}
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="phone">Phone</Label>
-                  <Input
-                    id="phone"
-                    value={formData.phone}
-                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    placeholder="+1 234 567 8900"
-                  />
+                  <Input id="phone" {...register("phone")} placeholder="+1 234 567 8900" />
                 </div>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="dateOfBirth">Date of Birth</Label>
-                <Input
-                  id="dateOfBirth"
-                  type="date"
-                  value={formData.dateOfBirth}
-                  onChange={(e) => setFormData({ ...formData, dateOfBirth: e.target.value })}
-                />
-                {formData.dateOfBirth && (
+                <Input id="dateOfBirth" type="date" {...register("dateOfBirth")} />
+                {dateOfBirth && (
                   <p className="text-sm text-muted-foreground">
-                    Age: {calculateAge(formData.dateOfBirth)} years
+                    Age: {calculateAge(dateOfBirth)} years
                   </p>
                 )}
               </div>
@@ -609,36 +626,24 @@ export default function CustomersPage() {
                 <Label htmlFor="address">Street Address</Label>
                 <Input
                   id="address"
-                  value={formData.address}
-                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                  {...register("address")}
                   placeholder="123 Main Street"
                 />
               </div>
               <div className="grid grid-cols-3 gap-4">
                 <div className="grid gap-2">
                   <Label htmlFor="city">City</Label>
-                  <Input
-                    id="city"
-                    value={formData.city}
-                    onChange={(e) => setFormData({ ...formData, city: e.target.value })}
-                    placeholder="New York"
-                  />
+                  <Input id="city" {...register("city")} placeholder="New York" />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="country">Country</Label>
-                  <Input
-                    id="country"
-                    value={formData.country}
-                    onChange={(e) => setFormData({ ...formData, country: e.target.value })}
-                    placeholder="USA"
-                  />
+                  <Input id="country" {...register("country")} placeholder="USA" />
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="postalCode">Postal Code</Label>
                   <Input
                     id="postalCode"
-                    value={formData.postalCode}
-                    onChange={(e) => setFormData({ ...formData, postalCode: e.target.value })}
+                    {...register("postalCode")}
                     placeholder="10001"
                   />
                 </div>
@@ -652,45 +657,52 @@ export default function CustomersPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="grid gap-2">
                     <Label>Family</Label>
-                    <Select
-                      value={formData.familyId || "none"}
-                      onValueChange={(value) =>
-                        setFormData({ ...formData, familyId: value === "none" ? "" : value })
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select family (optional)" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No family</SelectItem>
-                        {families.map((family) => (
-                          <SelectItem key={family._id} value={family._id}>
-                            {family.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Controller
+                      control={control}
+                      name="familyId"
+                      render={({ field }) => (
+                        <Select
+                          value={field.value || "none"}
+                          onValueChange={(value) =>
+                            field.onChange(value === "none" ? "" : value)
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select family (optional)" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">No family</SelectItem>
+                            {families.map((family) => (
+                              <SelectItem key={family._id} value={family._id}>
+                                {family.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
                   </div>
-                  {formData.familyId && (
+                  {familyId && (
                     <div className="grid gap-2">
                       <Label>Relationship</Label>
-                      <Select
-                        value={formData.relationshipToHead}
-                        onValueChange={(value) =>
-                          setFormData({ ...formData, relationshipToHead: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select relationship" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {relationships.map((rel) => (
-                            <SelectItem key={rel} value={rel} className="capitalize">
-                              {rel}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Controller
+                        control={control}
+                        name="relationshipToHead"
+                        render={({ field }) => (
+                          <Select value={field.value || ""} onValueChange={field.onChange}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select relationship" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {relationships.map((rel) => (
+                                <SelectItem key={rel} value={rel} className="capitalize">
+                                  {rel}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                      />
                     </div>
                   )}
                 </div>
@@ -702,22 +714,25 @@ export default function CustomersPage() {
               <Label htmlFor="notes">Notes</Label>
               <Textarea
                 id="notes"
-                value={formData.notes}
-                onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                {...register("notes")}
                 placeholder="Any additional notes..."
                 rows={3}
               />
             </div>
-          </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={isLoading} className="gradient-bg">
-              {isLoading ? "Saving..." : selectedCustomer ? "Update" : "Add Customer"}
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isSubmitting} className="gradient-bg">
+                {isSubmitting ? "Saving..." : selectedCustomer ? "Update" : "Add Customer"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 
@@ -730,45 +745,59 @@ export default function CustomersPage() {
               Create a new family account and assign a head of family
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <form onSubmit={onCreateFamily} className="space-y-4">
             <div className="grid gap-2">
               <Label htmlFor="familyName">Family Name</Label>
               <Input
                 id="familyName"
-                value={familyName}
-                onChange={(e) => setFamilyName(e.target.value)}
+                {...registerFamily("name")}
                 placeholder="e.g., The Smith Family"
               />
+              {familyErrors.name && (
+                <p className="text-xs text-destructive">{familyErrors.name.message}</p>
+              )}
             </div>
             <div className="grid gap-2">
               <Label>Head of Family</Label>
-              <Select
-                value={familyHeadId}
-                onValueChange={(value) => setFamilyHeadId(value)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select head of family" />
-                </SelectTrigger>
-                <SelectContent>
-                  {customers
-                    ?.filter((c) => !c.familyId)
-                    .map((customer) => (
-                      <SelectItem key={customer._id} value={customer._id}>
-                        {customer.firstName} {customer.lastName}
-                      </SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
+              <Controller
+                control={familyControl}
+                name="headCustomerId"
+                render={({ field }) => (
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select head of family" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customers
+                        ?.filter((c) => !c.familyId)
+                        .map((customer) => (
+                          <SelectItem key={customer._id} value={customer._id}>
+                            {customer.firstName} {customer.lastName}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {familyErrors.headCustomerId && (
+                <p className="text-xs text-destructive">
+                  {familyErrors.headCustomerId.message}
+                </p>
+              )}
             </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsFamilyDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleCreateFamily} disabled={isLoading} className="gradient-bg">
-              {isLoading ? "Creating..." : "Create Family"}
-            </Button>
-          </DialogFooter>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsFamilyDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={isFamilySubmitting} className="gradient-bg">
+                {isFamilySubmitting ? "Creating..." : "Create Family"}
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
 

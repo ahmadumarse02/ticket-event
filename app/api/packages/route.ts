@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { desc, eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { packages } from "@/lib/db/schema"
+import { logActivity } from "@/lib/activity"
 
 export const dynamic = "force-dynamic"
 
@@ -42,6 +43,18 @@ export async function POST(request: Request) {
   })
 
   const rows = await db.select().from(packages).where(eq(packages.id, id))
+
+  await logActivity({
+    entity: "package",
+    entityId: id,
+    action: "created",
+    summary: `Created package "${body.name}"`,
+    metadata: {
+      type: body.type,
+      status: body.status,
+    },
+  })
+
   return NextResponse.json(
     {
       ...rows[0],

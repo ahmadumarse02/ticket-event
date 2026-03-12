@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/admin/page-header"
 import { StatsCard } from "@/components/admin/stats-card"
 import { StatusBadge } from "@/components/admin/status-badge"
 import {
+  Activity,
   LayoutDashboard,
   Calendar,
   Users,
@@ -12,6 +13,9 @@ import {
   Package,
   DollarSign,
   Ticket,
+  Plus,
+  Pencil,
+  Trash2,
 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -30,6 +34,9 @@ export default function AdminDashboard() {
   const { data: upcomingEvents } = useLiveData<any>("/api/events?status=published&limit=5", {
     interval: 12000,
   })
+  const { data: activityLogs } = useLiveData<any>("/api/activity?limit=7", {
+    interval: 12000,
+  })
   const { data: dailyStats } = useLiveData<any>("/api/stats/transactions/daily?days=7", {
     interval: 12000,
   })
@@ -41,6 +48,27 @@ export default function AdminDashboard() {
     new Date(ts).toLocaleDateString("en-US", {
       weekday: "short", month: "short", day: "numeric",
     })
+
+  const fmtDateTime = (ts: number) =>
+    new Date(ts).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+
+  const getActivityConfig = (action: string) => {
+    switch (action) {
+      case "created":
+        return { Icon: Plus, bg: "bg-emerald-500/15 text-emerald-300" }
+      case "updated":
+        return { Icon: Pencil, bg: "bg-amber-500/15 text-amber-300" }
+      case "deleted":
+        return { Icon: Trash2, bg: "bg-rose-500/15 text-rose-300" }
+      default:
+        return { Icon: Activity, bg: "bg-muted text-muted-foreground" }
+    }
+  }
 
   return (
     <div className="space-y-8">
@@ -198,7 +226,7 @@ export default function AdminDashboard() {
       </div>
 
       {/* Recent activity */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-3">
 
         {/* Recent Transactions */}
         <Card className="border-border bg-card">
@@ -276,6 +304,46 @@ export default function AdminDashboard() {
                 ))}
                 {(!upcomingEvents || upcomingEvents.filter(e => e.startDate > Date.now()).length === 0) && (
                   <p className="py-8 text-center text-sm text-muted-foreground">No upcoming events</p>
+                )}
+              </div>
+            </ScrollArea>
+          </CardContent>
+        </Card>
+
+        {/* Recent Activity */}
+        <Card className="border-border bg-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 font-display text-base font-semibold">
+              <Activity className="h-4 w-4 text-primary" />
+              Recent Activity
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ScrollArea className="h-[280px] pr-1">
+              <div className="space-y-3">
+                {activityLogs?.map((log: any) => {
+                  const { Icon, bg } = getActivityConfig(log.action)
+                  return (
+                    <div
+                      key={log._id}
+                      className="flex items-start gap-3 rounded-lg border border-border px-3 py-2.5 transition-colors hover:bg-white/[0.025]"
+                    >
+                      <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${bg}`}>
+                        <Icon className="h-3.5 w-3.5" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium leading-tight">{log.summary}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {fmtDateTime(log.createdAt)} · {String(log.entity).replace("_", " ")}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })}
+                {(!activityLogs || activityLogs.length === 0) && (
+                  <p className="py-8 text-center text-sm text-muted-foreground">
+                    No recent activity yet
+                  </p>
                 )}
               </div>
             </ScrollArea>

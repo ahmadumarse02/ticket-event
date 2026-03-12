@@ -1,9 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Aperture, Lock, Mail, User } from "lucide-react"
+import { useForm } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { SiteHeader } from "@/components/public/site-header"
 import { SiteFooter } from "@/components/public/site-footer"
 import { Button } from "@/components/ui/button"
@@ -13,18 +16,41 @@ import { Label } from "@/components/ui/label"
 import { authClient } from "@/lib/auth-client"
 import { hasAdminRole } from "@/lib/auth-utils"
 
+const registerSchema = z
+  .object({
+    name: z.string().min(2, "Please enter your full name."),
+    email: z.string().email("Enter a valid email address."),
+    password: z.string().min(8, "Password must be at least 8 characters."),
+    confirmPassword: z.string().min(8, "Please confirm your password."),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords do not match.",
+    path: ["confirmPassword"],
+  })
+
+type RegisterValues = z.infer<typeof registerSchema>
+
 export default function RegisterPage() {
   const router = useRouter()
   const { data: session } = authClient.useSession()
   const role = (session?.user as { role?: string | string[] | null } | undefined)?.role
   const isAdmin = hasAdminRole(role)
 
-  const [name, setName] = useState("")
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
-  const [error, setError] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+    clearErrors,
+  } = useForm<RegisterValues>({
+    resolver: zodResolver(registerSchema),
+    defaultValues: {
+      name: "",
+      email: "",
+      password: "",
+      confirmPassword: "",
+    },
+  })
 
   useEffect(() => {
     if (session) {
@@ -32,37 +58,25 @@ export default function RegisterPage() {
     }
   }, [isAdmin, router, session])
 
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault()
-    setError(null)
-
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.")
-      return
-    }
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.")
-      return
-    }
-
-    setIsLoading(true)
+  const onSubmit = handleSubmit(async (values) => {
+    clearErrors("root")
     try {
       const { error: signUpError } = await authClient.signUp.email({
-        name,
-        email,
-        password,
+        name: values.name,
+        email: values.email,
+        password: values.password,
       })
       if (signUpError) {
-        setError(signUpError.message || "Unable to create your account.")
+        setError("root", {
+          message: signUpError.message || "Unable to create your account.",
+        })
         return
       }
       router.push("/events")
     } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setIsLoading(false)
+      setError("root", { message: (err as Error).message })
     }
-  }
+  })
 
   return (
     <div className="min-h-screen bg-background">
@@ -84,20 +98,22 @@ export default function RegisterPage() {
               </p>
             </CardHeader>
             <CardContent>
-              <form className="space-y-4" onSubmit={handleSubmit}>
+              <form className="space-y-4" onSubmit={onSubmit}>
                 <div className="space-y-2">
                   <Label htmlFor="name">Full name</Label>
                   <div className="relative">
                     <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                     <Input
                       id="name"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      {...register("name")}
                       className="pl-9"
                       placeholder="Jordan Lee"
                       required
                     />
                   </div>
+                  {errors.name && (
+                    <p className="text-xs text-destructive">{errors.name.message}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
@@ -106,13 +122,15 @@ export default function RegisterPage() {
                     <Input
                       id="email"
                       type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      {...register("email")}
                       className="pl-9"
                       placeholder="you@example.com"
                       required
                     />
                   </div>
+                  {errors.email && (
+                    <p className="text-xs text-destructive">{errors.email.message}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password">Password</Label>
@@ -121,13 +139,15 @@ export default function RegisterPage() {
                     <Input
                       id="password"
                       type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      {...register("password")}
                       className="pl-9"
                       placeholder="Minimum 8 characters"
                       required
                     />
                   </div>
+                  {errors.password && (
+                    <p className="text-xs text-destructive">{errors.password.message}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="confirmPassword">Confirm password</Label>
@@ -136,25 +156,27 @@ export default function RegisterPage() {
                     <Input
                       id="confirmPassword"
                       type="password"
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      {...register("confirmPassword")}
                       className="pl-9"
                       placeholder="Re-enter your password"
                       required
                     />
                   </div>
+                  {errors.confirmPassword && (
+                    <p className="text-xs text-destructive">{errors.confirmPassword.message}</p>
+                  )}
                 </div>
-                {error && (
+                {errors.root?.message && (
                   <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                    {error}
+                    {errors.root.message}
                   </div>
                 )}
                 <Button
                   type="submit"
                   className="w-full gradient-bg hover:opacity-90"
-                  disabled={isLoading}
+                  disabled={isSubmitting}
                 >
-                  {isLoading ? "Creating account..." : "Create account"}
+                  {isSubmitting ? "Creating account..." : "Create account"}
                 </Button>
               </form>
               <p className="mt-4 text-center text-sm text-muted-foreground">

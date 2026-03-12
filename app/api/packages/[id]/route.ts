@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { eq } from "drizzle-orm"
 import { db } from "@/lib/db"
 import { packages } from "@/lib/db/schema"
+import { logActivity } from "@/lib/activity"
 
 export const dynamic = "force-dynamic"
 
@@ -52,6 +53,17 @@ export async function PUT(request: Request, { params }: RouteContext) {
     return NextResponse.json({ message: "Package not found" }, { status: 404 })
   }
 
+  await logActivity({
+    entity: "package",
+    entityId: updated.id,
+    action: "updated",
+    summary: `Updated package "${updated.name}"`,
+    metadata: {
+      type: updated.type,
+      status: updated.status,
+    },
+  })
+
   return NextResponse.json({
     ...updated,
     _id: updated.id,
@@ -65,10 +77,17 @@ export async function DELETE(_request: Request, { params }: RouteContext) {
   const deleted = await db
     .delete(packages)
     .where(eq(packages.id, id))
-    .returning({ id: packages.id })
+    .returning({ id: packages.id, name: packages.name })
 
   if (!deleted.length) {
     return NextResponse.json({ message: "Package not found" }, { status: 404 })
   }
+
+  await logActivity({
+    entity: "package",
+    entityId: deleted[0].id,
+    action: "deleted",
+    summary: `Deleted package "${deleted[0].name}"`,
+  })
   return new NextResponse(null, { status: 204 })
 }

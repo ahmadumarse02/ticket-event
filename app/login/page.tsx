@@ -1,9 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Aperture, Lock, Mail } from "lucide-react"
+import { useForm } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { SiteHeader } from "@/components/public/site-header"
 import { SiteFooter } from "@/components/public/site-footer"
 import { Button } from "@/components/ui/button"
@@ -13,16 +16,32 @@ import { Label } from "@/components/ui/label"
 import { authClient } from "@/lib/auth-client"
 import { hasAdminRole } from "@/lib/auth-utils"
 
+const loginSchema = z.object({
+  email: z.string().email("Enter a valid email address."),
+  password: z.string().min(8, "Password must be at least 8 characters."),
+})
+
+type LoginValues = z.infer<typeof loginSchema>
+
 export default function LoginPage() {
   const router = useRouter()
   const { data: session } = authClient.useSession()
   const role = (session?.user as { role?: string | string[] | null } | undefined)?.role
   const isAdmin = hasAdminRole(role)
 
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [error, setError] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
+  const {
+    register,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+    clearErrors,
+  } = useForm<LoginValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: "",
+      password: "",
+    },
+  })
 
   useEffect(() => {
     if (session) {
@@ -30,26 +49,24 @@ export default function LoginPage() {
     }
   }, [isAdmin, router, session])
 
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault()
-    setError(null)
-    setIsLoading(true)
+  const onSubmit = handleSubmit(async (values) => {
+    clearErrors("root")
     try {
       const { error: signInError } = await authClient.signIn.email({
-        email,
-        password,
+        email: values.email,
+        password: values.password,
       })
       if (signInError) {
-        setError(signInError.message || "Unable to sign in.")
+        setError("root", {
+          message: signInError.message || "Unable to sign in.",
+        })
         return
       }
       router.push("/events")
     } catch (err) {
-      setError((err as Error).message)
-    } finally {
-      setIsLoading(false)
+      setError("root", { message: (err as Error).message })
     }
-  }
+  })
 
   return (
     <div className="min-h-screen bg-background">
@@ -71,7 +88,7 @@ export default function LoginPage() {
               </p>
             </CardHeader>
             <CardContent>
-              <form className="space-y-4" onSubmit={handleSubmit}>
+              <form className="space-y-4" onSubmit={onSubmit}>
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
                   <div className="relative">
@@ -79,13 +96,15 @@ export default function LoginPage() {
                     <Input
                       id="email"
                       type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
+                      {...register("email")}
                       className="pl-9"
                       placeholder="you@example.com"
                       required
                     />
                   </div>
+                  {errors.email && (
+                    <p className="text-xs text-destructive">{errors.email.message}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="password">Password</Label>
@@ -94,25 +113,27 @@ export default function LoginPage() {
                     <Input
                       id="password"
                       type="password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
+                      {...register("password")}
                       className="pl-9"
                       placeholder="••••••••"
                       required
                     />
                   </div>
+                  {errors.password && (
+                    <p className="text-xs text-destructive">{errors.password.message}</p>
+                  )}
                 </div>
-                {error && (
+                {errors.root?.message && (
                   <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                    {error}
+                    {errors.root.message}
                   </div>
                 )}
                 <Button
                   type="submit"
                   className="w-full gradient-bg hover:opacity-90"
-                  disabled={isLoading}
+                  disabled={isSubmitting}
                 >
-                  {isLoading ? "Signing in..." : "Sign in"}
+                  {isSubmitting ? "Signing in..." : "Sign in"}
                 </Button>
               </form>
               <p className="mt-4 text-center text-sm text-muted-foreground">

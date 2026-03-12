@@ -6,6 +6,7 @@ import {
   events,
   families,
   packages,
+  activityLogs,
   savedReports,
   ticketTemplates,
   transactions,
@@ -25,6 +26,7 @@ async function seed() {
 
   await db.execute(sql`
     TRUNCATE TABLE
+      activity_logs,
       transactions,
       packages,
       ticket_templates,
@@ -168,6 +170,69 @@ async function seed() {
       updatedAt: Date.now(),
     }))
   )
+
+  const now = Date.now()
+  const activitySeed = [
+    {
+      id: `act_${crypto.randomUUID()}`,
+      entity: "event",
+      entityId: mockEvents[0]?._id ?? null,
+      action: "created",
+      summary: `Created event "${mockEvents[0]?.name ?? "Launch Event"}"`,
+      metadata: {
+        status: mockEvents[0]?.status ?? "draft",
+        type: mockEvents[0]?.type ?? "physical",
+      },
+      createdAt: now - 1000 * 60 * 60 * 2,
+    },
+    {
+      id: `act_${crypto.randomUUID()}`,
+      entity: "package",
+      entityId: mockPackages[0]?._id ?? null,
+      action: "created",
+      summary: `Created package "${mockPackages[0]?.name ?? "Starter Pack"}"`,
+      metadata: {
+        type: mockPackages[0]?.type ?? "bundle",
+        status: mockPackages[0]?.status ?? "active",
+      },
+      createdAt: now - 1000 * 60 * 60,
+    },
+    {
+      id: `act_${crypto.randomUUID()}`,
+      entity: "customer",
+      entityId: mockCustomers[0]?._id ?? null,
+      action: "created",
+      summary: `Added customer "${mockCustomers[0]?.firstName ?? "Jordan"} ${mockCustomers[0]?.lastName ?? "Lee"}"`,
+      metadata: {
+        email: mockCustomers[0]?.email ?? "jordan@example.com",
+      },
+      createdAt: now - 1000 * 60 * 30,
+    },
+    {
+      id: `act_${crypto.randomUUID()}`,
+      entity: "family",
+      entityId: mockFamilies[0]?._id ?? null,
+      action: "created",
+      summary: `Created family "${mockFamilies[0]?.name ?? "Aurora Family"}"`,
+      metadata: {
+        headCustomerId: mockFamilies[0]?.headCustomerId ?? null,
+      },
+      createdAt: now - 1000 * 60 * 20,
+    },
+    {
+      id: `act_${crypto.randomUUID()}`,
+      entity: "ticket_template",
+      entityId: mockTicketTemplates[0]?._id ?? null,
+      action: "created",
+      summary: `Created ticket template "${mockTicketTemplates[0]?.name ?? "Modern Template"}"`,
+      metadata: {
+        isDefault: mockTicketTemplates[0]?.isDefault ?? false,
+      },
+      createdAt: now - 1000 * 60 * 10,
+    },
+  ]
+
+  await db.insert(activityLogs).values(activitySeed)
 
   console.log("Seed complete.")
 }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useMemo } from "react"
 import Link from "next/link"
 import {
   Calendar,
@@ -10,6 +10,9 @@ import {
   Aperture,
   Ticket,
 } from "lucide-react"
+import { useForm, Controller } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { SiteHeader } from "@/components/public/site-header"
 import { SiteFooter } from "@/components/public/site-footer"
 import { Badge } from "@/components/ui/badge"
@@ -20,6 +23,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton"
 import { useLiveData } from "@/hooks/use-live-data"
 import type { MockEvent as EventRecord } from "@/lib/mock-data"
+
+const filtersSchema = z.object({
+  search: z.string().optional(),
+  type: z.enum(["all", "physical", "online"]),
+  price: z.enum(["all", "free", "paid"]),
+})
+
+type FiltersValues = z.infer<typeof filtersSchema>
+
+const defaultFilters: FiltersValues = {
+  search: "",
+  type: "all",
+  price: "all",
+}
 
 const formatDate = (timestamp: number) =>
   new Date(timestamp).toLocaleDateString("en-US", {
@@ -40,9 +57,14 @@ export default function EventsPage() {
     { interval: 12000 }
   )
 
-  const [search, setSearch] = useState("")
-  const [typeFilter, setTypeFilter] = useState("all")
-  const [priceFilter, setPriceFilter] = useState("all")
+  const { register, control, watch } = useForm<FiltersValues>({
+    resolver: zodResolver(filtersSchema),
+    defaultValues: defaultFilters,
+  })
+
+  const search = watch("search") || ""
+  const typeFilter = watch("type")
+  const priceFilter = watch("price")
 
   const filteredEvents = useMemo(() => {
     const query = search.trim().toLowerCase()
@@ -94,32 +116,43 @@ export default function EventsPage() {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                {...register("search")}
                 placeholder="Search by event name, city, or venue"
                 className="pl-9"
               />
             </div>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger>
-                <SelectValue placeholder="All event types" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All types</SelectItem>
-                <SelectItem value="physical">In-person</SelectItem>
-                <SelectItem value="online">Online</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={priceFilter} onValueChange={setPriceFilter}>
-              <SelectTrigger>
-                <SelectValue placeholder="Any price" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Any price</SelectItem>
-                <SelectItem value="free">Free events</SelectItem>
-                <SelectItem value="paid">Paid events</SelectItem>
-              </SelectContent>
-            </Select>
+            <Controller
+              control={control}
+              name="type"
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="All event types" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All types</SelectItem>
+                    <SelectItem value="physical">In-person</SelectItem>
+                    <SelectItem value="online">Online</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            <Controller
+              control={control}
+              name="price"
+              render={({ field }) => (
+                <Select value={field.value} onValueChange={field.onChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Any price" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Any price</SelectItem>
+                    <SelectItem value="free">Free events</SelectItem>
+                    <SelectItem value="paid">Paid events</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
+            />
           </div>
         </div>
       </div>
