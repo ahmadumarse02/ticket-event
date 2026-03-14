@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server"
 import { and, eq } from "drizzle-orm"
+import { headers } from "next/headers"
 import { db } from "@/lib/db"
 import { customers, events, tickets, transactions } from "@/lib/db/schema"
 import { logActivity } from "@/lib/activity"
+import { auth } from "@/lib/auth"
 
 export const dynamic = "force-dynamic"
 
@@ -25,6 +27,14 @@ const buildTransactionNumber = () => {
 }
 
 export async function POST(request: Request) {
+  const session = await auth.api.getSession({
+    headers: await headers(),
+  })
+
+  if (!session) {
+    return NextResponse.json({ message: "Unauthorized" }, { status: 401 })
+  }
+
   const body = (await request.json()) as CheckoutBody
   const now = Date.now()
 
@@ -83,13 +93,18 @@ export async function POST(request: Request) {
     }
   }
 
-  const firstName = body.customer?.firstName?.trim() || ""
-  const lastName = body.customer?.lastName?.trim() || ""
-  const email = (body.customer?.email || "").trim().toLowerCase()
-
-  if (!firstName || !lastName || !email) {
-    return NextResponse.json({ message: "Customer details are required" }, { status: 400 })
+  const user = session.user as { name?: string | null; email?: string | null; id?: string | null }
+  const email = (user.email || "").trim().toLowerCase()
+  if (!email) {
+    return NextResponse.json({ message: "Account email is required" }, { status: 400 })
   }
+
+  const parts = (user.name || "")
+    .split(" ")
+    .map((item) => item.trim())
+    .filter(Boolean)
+  const firstName = parts[0] || "User"
+  const lastName = parts.slice(1).join(" ") || "User"
 
   const existingCustomerRows = await db.select().from(customers).where(eq(customers.email, email))
   let customerId = existingCustomerRows[0]?.id
@@ -205,7 +220,22 @@ export async function POST(request: Request) {
       total,
       seat: body.seat ?? null,
     },
+    actorId: user.id ?? null,
+    actorName: user.name ?? null,
   })
 
-  return NextResponse.json({ transactionId, ticketsIssued: quantity }, { status: 201 })
+  return NextResponse.json(
+    {
+      transactionId,
+      ticketsIssued: quantity,
+      tickets: ticketRecords.map((ticket) => ({
+        id: ticket.id,
+        qrPayload: ticket.qrPayload,
+        seatSection: ticket.seatSection,
+        seatRow: ticket.seatRow,
+        seatNumber: ticket.seatNumber,
+      })),
+    },
+    { status: 201 }
+  )
 }

@@ -2,7 +2,7 @@
 
 import { useEffect } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Aperture, Lock, Mail } from "lucide-react"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
@@ -25,9 +25,13 @@ type LoginValues = z.infer<typeof loginSchema>
 
 export default function LoginPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { data: session } = authClient.useSession()
   const role = (session?.user as { role?: string | string[] | null } | undefined)?.role
   const isAdmin = hasAdminRole(role)
+
+  const rawNextPath = searchParams.get("next")
+  const nextPath = rawNextPath && rawNextPath.startsWith("/") ? rawNextPath : null
 
   const {
     register,
@@ -45,9 +49,13 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (session) {
+      if (!isAdmin && nextPath) {
+        router.push(nextPath)
+        return
+      }
       router.push(isAdmin ? "/admin" : "/events")
     }
-  }, [isAdmin, router, session])
+  }, [isAdmin, nextPath, router, session])
 
   const onSubmit = handleSubmit(async (values) => {
     clearErrors("root")
@@ -62,7 +70,7 @@ export default function LoginPage() {
         })
         return
       }
-      router.push("/events")
+      router.push(isAdmin ? "/admin" : nextPath || "/events")
     } catch (err) {
       setError("root", { message: (err as Error).message })
     }
