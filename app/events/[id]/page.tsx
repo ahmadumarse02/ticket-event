@@ -1,7 +1,7 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { useParams } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import {
   ArrowUpRight,
@@ -41,6 +41,7 @@ import { useLiveData } from "@/hooks/use-live-data"
 import { cn } from "@/lib/utils"
 import type { MockEvent as EventRecord, MockTicket } from "@/lib/mock-data"
 import { apiRequest } from "@/lib/api-client"
+import { authClient } from "@/lib/auth-client"
 import { z } from "zod"
 import { useForm, Controller } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
@@ -95,7 +96,9 @@ type CheckoutValues = z.infer<typeof checkoutSchema>
 
 export default function EventDetailPage() {
   const params = useParams<{ id: string }>()
+  const router = useRouter()
   const eventId = Array.isArray(params.id) ? params.id[0] : params.id
+  const { data: session } = authClient.useSession()
 
   const { data: event, isLoading: eventLoading } = useLiveData<EventRecord>(
     `/api/events/${eventId}`,
@@ -121,7 +124,13 @@ export default function EventDetailPage() {
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false)
   const [checkoutSummary, setCheckoutSummary] = useState<{
     transactionId: string
-    ticketsIssued: number
+    tickets: Array<{
+      id: string
+      qrPayload: string
+      seatSection?: string | null
+      seatRow?: string | null
+      seatNumber?: string | null
+    }>
   } | null>(null)
 
   const {
@@ -235,11 +244,22 @@ export default function EventDetailPage() {
   const seatMapSections = showSeatSelection ? seatMap?.sections ?? [] : []
 
   const openCheckout = () => {
+    if (!session) {
+      toast.error("Please log in to buy tickets")
+      const nextPath = eventId ? `/events/${eventId}` : "/events"
+      router.push(`/login?next=${encodeURIComponent(nextPath)}`)
+      return
+    }
+
     setCheckoutSummary(null)
+    const user = session.user as { name?: string | null; email?: string | null }
+    const parts = (user.name || "").split(" ").map((item) => item.trim()).filter(Boolean)
+    const firstName = parts[0] || "User"
+    const lastName = parts.slice(1).join(" ") || "User"
     reset({
-      firstName: "",
-      lastName: "",
-      email: "",
+      firstName,
+      lastName,
+      email: user.email || "",
       quantity: "1",
       priceTierName: event.priceTiers?.[0]?.name || "",
       paymentMethod: "card",
@@ -248,9 +268,25 @@ export default function EventDetailPage() {
   }
 
   const onCheckout = handleSubmit(async (values) => {
+    if (!session) {
+      toast.error("Please log in to buy tickets")
+      const nextPath = eventId ? `/events/${eventId}` : "/events"
+      router.push(`/login?next=${encodeURIComponent(nextPath)}`)
+      return
+    }
+
     try {
       const qty = selectedSeat ? 1 : Number(values.quantity)
-      const result = await apiRequest<{ transactionId: string; ticketsIssued: number }>(
+      const result = await apiRequest<{
+        transactionId: string
+        tickets: Array<{
+          id: string
+          qrPayload: string
+          seatSection?: string | null
+          seatRow?: string | null
+          seatNumber?: string | null
+        }>
+      }>(
         "/api/checkout",
         {
           method: "POST",
@@ -730,14 +766,14 @@ export default function EventDetailPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label htmlFor="firstName">First name</Label>
-                <Input id="firstName" {...register("firstName")} placeholder="Avery" />
+                <Input id="firstName" {...register("firstName")} placeholder="Avery" disabled={!!session} />
                 {errors.firstName && (
                   <p className="text-xs text-destructive">{errors.firstName.message}</p>
                 )}
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="lastName">Last name</Label>
-                <Input id="lastName" {...register("lastName")} placeholder="Nguyen" />
+                <Input id="lastName" {...register("lastName")} placeholder="Nguyen" disabled={!!session} />
                 {errors.lastName && (
                   <p className="text-xs text-destructive">{errors.lastName.message}</p>
                 )}
@@ -746,7 +782,7 @@ export default function EventDetailPage() {
 
             <div className="grid gap-2">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" {...register("email")} placeholder="you@example.com" />
+              <Input id="email" {...register("email")} placeholder="you@example.com" disabled={!!session} />
               {errors.email && (
                 <p className="text-xs text-destructive">{errors.email.message}</p>
               )}
@@ -828,8 +864,38 @@ export default function EventDetailPage() {
             {checkoutSummary ? (
               <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
                 Created order <span className="font-semibold">{checkoutSummary.transactionId}</span>{" "}
-                and issued <span className="font-semibold">{checkoutSummary.ticketsIssued}</span>{" "}
+                and issued <span className="font-semibold">{checkoutSummary.tickets.length}</span>{" "}
                 ticket(s).
+              </div>
+            ) : null}
+
+            {checkoutSummary ? (
+              <div className="space-y-3">
+                {checkoutSummary.tickets.map((ticket) => (
+                  <div
+                    key={ticket.id}
+                    className="flex flex-col gap-4 rounded-lg border border-border bg-background/40 p-4 sm:flex-row sm:items-center"
+                  >
+                    <div className="flex items-center justify-center rounded-md bg-white p-2">
+                      <img
+                        src={`/api/qr?data=${encodeURIComponent(ticket.qrPayload)}`}
+                        alt="Ticket QR"
+                        className="h-28 w-28"
+                      />
+                    </div>
+                    <div className="space-y-1 text-sm">
+                      <p className="font-semibold">Ticket {ticket.id}</p>
+                      {ticket.seatSection && ticket.seatRow && ticket.seatNumber ? (
+                        <p className="text-xs text-muted-foreground">
+                          Seat: {ticket.seatSection} Row {ticket.seatRow} Seat {ticket.seatNumber}
+                        </p>
+                      ) : null}
+                      <p className="break-all text-xs text-muted-foreground">
+                        {ticket.qrPayload}
+                      </p>
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : null}
 
