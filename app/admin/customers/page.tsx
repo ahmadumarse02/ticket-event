@@ -57,20 +57,60 @@ import type { MockCustomer, MockFamily } from "@/lib/mock-data"
 import { useLiveData } from "@/hooks/use-live-data"
 import { apiRequest } from "@/lib/api-client"
 
-const customerSchema = z.object({
-  firstName: z.string().min(1, "First name is required."),
-  lastName: z.string().min(1, "Last name is required."),
-  email: z.string().email("Enter a valid email address."),
-  phone: z.string().optional(),
-  dateOfBirth: z.string().optional(),
-  address: z.string().optional(),
-  city: z.string().optional(),
-  country: z.string().optional(),
-  postalCode: z.string().optional(),
-  notes: z.string().optional(),
-  familyId: z.string().optional(),
-  relationshipToHead: z.string().optional(),
-})
+const relationships = ["head", "spouse", "child", "parent", "sibling", "other"] as const
+
+const customerSchema = z
+  .object({
+    firstName: z.string().min(1, "First name is required."),
+    lastName: z.string().min(1, "Last name is required."),
+    email: z.string().email("Enter a valid email address."),
+    phone: z.string().optional(),
+    dateOfBirth: z.string().optional(),
+    address: z.string().optional(),
+    city: z.string().optional(),
+    country: z.string().optional(),
+    postalCode: z.string().optional(),
+    notes: z.string().optional(),
+    familyId: z.string().optional(),
+    relationshipToHead: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const dateOfBirth = (data.dateOfBirth || "").trim()
+    if (dateOfBirth) {
+      const timestamp = new Date(dateOfBirth).getTime()
+      if (Number.isNaN(timestamp)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["dateOfBirth"],
+          message: "Enter a valid date of birth.",
+        })
+      } else if (timestamp > Date.now()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["dateOfBirth"],
+          message: "Date of birth cannot be in the future.",
+        })
+      }
+    }
+
+    const familyId = (data.familyId || "").trim()
+    const relationship = (data.relationshipToHead || "").trim()
+    if (familyId) {
+      if (!relationship) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["relationshipToHead"],
+          message: "Select a relationship to the head of family.",
+        })
+      } else if (!(relationships as readonly string[]).includes(relationship)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["relationshipToHead"],
+          message: "Select a valid relationship.",
+        })
+      }
+    }
+  })
 
 type CustomerFormValues = z.infer<typeof customerSchema>
 
@@ -100,8 +140,6 @@ const familyDefaults: FamilyFormValues = {
   name: "",
   headCustomerId: "",
 }
-
-const relationships = ["head", "spouse", "child", "parent", "sibling", "other"]
 
 export default function CustomersPage() {
   const {
@@ -611,6 +649,9 @@ export default function CustomersPage() {
               <div className="grid gap-2">
                 <Label htmlFor="dateOfBirth">Date of Birth</Label>
                 <Input id="dateOfBirth" type="date" {...register("dateOfBirth")} />
+                {errors.dateOfBirth && (
+                  <p className="text-xs text-destructive">{errors.dateOfBirth.message}</p>
+                )}
                 {dateOfBirth && (
                   <p className="text-sm text-muted-foreground">
                     Age: {calculateAge(dateOfBirth)} years
@@ -703,6 +744,11 @@ export default function CustomersPage() {
                           </Select>
                         )}
                       />
+                      {errors.relationshipToHead && (
+                        <p className="text-xs text-destructive">
+                          {errors.relationshipToHead.message}
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

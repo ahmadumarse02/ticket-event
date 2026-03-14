@@ -57,14 +57,61 @@ import type { MockTransaction } from "@/lib/mock-data"
 import { useLiveData } from "@/hooks/use-live-data"
 import { apiRequest } from "@/lib/api-client"
 
-const filterSchema = z.object({
-  status: z.string(),
-  paymentMethod: z.string(),
-  startDate: z.string().optional(),
-  endDate: z.string().optional(),
-  minAmount: z.string().optional(),
-  maxAmount: z.string().optional(),
-})
+const filterSchema = z
+  .object({
+    status: z.string(),
+    paymentMethod: z.string(),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    minAmount: z.string().optional(),
+    maxAmount: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.startDate && data.endDate) {
+      const start = new Date(data.startDate).getTime()
+      const end = new Date(data.endDate).getTime()
+      if (!Number.isNaN(start) && !Number.isNaN(end) && end < start) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["endDate"],
+          message: "End date must be on or after start date.",
+        })
+      }
+    }
+
+    const minAmount = data.minAmount ? Number(data.minAmount) : undefined
+    const maxAmount = data.maxAmount ? Number(data.maxAmount) : undefined
+
+    if (data.minAmount && (typeof minAmount !== "number" || Number.isNaN(minAmount) || minAmount < 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["minAmount"],
+        message: "Enter a valid minimum amount.",
+      })
+    }
+
+    if (data.maxAmount && (typeof maxAmount !== "number" || Number.isNaN(maxAmount) || maxAmount < 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maxAmount"],
+        message: "Enter a valid maximum amount.",
+      })
+    }
+
+    if (
+      typeof minAmount === "number" &&
+      typeof maxAmount === "number" &&
+      !Number.isNaN(minAmount) &&
+      !Number.isNaN(maxAmount) &&
+      maxAmount < minAmount
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maxAmount"],
+        message: "Max amount must be greater than or equal to min amount.",
+      })
+    }
+  })
 
 type TransactionFilters = z.infer<typeof filterSchema>
 
@@ -114,7 +161,7 @@ export default function TransactionsPage() {
     control: filterControl,
     handleSubmit: handleFilterSubmit,
     reset: resetFilters,
-    formState: { isSubmitting: isFilterSubmitting },
+    formState: { errors: filterErrors, isSubmitting: isFilterSubmitting },
   } = useForm<TransactionFilters>({
     resolver: zodResolver(filterSchema),
     defaultValues: initialFilters,
@@ -124,6 +171,7 @@ export default function TransactionsPage() {
     register: registerRefund,
     handleSubmit: handleRefundSubmit,
     reset: resetRefund,
+    setError: setRefundError,
     formState: { errors: refundErrors, isSubmitting: isRefundSubmitting },
   } = useForm<RefundFormValues>({
     resolver: zodResolver(refundSchema),
@@ -204,6 +252,17 @@ export default function TransactionsPage() {
     if (!selectedTransaction) return
     try {
       const amount = parseFloat(values.amount)
+      if (Number.isNaN(amount) || amount <= 0) {
+        setRefundError("amount", { message: "Enter a valid refund amount." })
+        return
+      }
+
+      const total = Number(selectedTransaction.total) || 0
+      if (amount > total) {
+        setRefundError("amount", { message: "Refund amount cannot exceed the transaction total." })
+        return
+      }
+
       const isFullRefund = amount >= selectedTransaction.total
 
       await apiRequest(`/api/transactions/${selectedTransaction._id}`, {
@@ -444,6 +503,11 @@ export default function TransactionsPage() {
                     placeholder="End date"
                   />
                 </div>
+                {(filterErrors.startDate || filterErrors.endDate) && (
+                  <p className="text-xs text-destructive">
+                    {filterErrors.startDate?.message || filterErrors.endDate?.message}
+                  </p>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -460,6 +524,11 @@ export default function TransactionsPage() {
                     placeholder="Max"
                   />
                 </div>
+                {(filterErrors.minAmount || filterErrors.maxAmount) && (
+                  <p className="text-xs text-destructive">
+                    {filterErrors.minAmount?.message || filterErrors.maxAmount?.message}
+                  </p>
+                )}
               </div>
 
               <div className="flex gap-2">
