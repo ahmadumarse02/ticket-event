@@ -16,6 +16,42 @@ export type PriceTier = {
   price: number
 }
 
+export type SeatMapSection = {
+  id: string
+  name: string
+  rows: number
+  seatsPerRow: number
+  rowLabelPrefix?: string
+  seatLabelStart?: number
+}
+
+export type SeatMap = {
+  label: string
+  sections: SeatMapSection[]
+}
+
+export type TransferRules = {
+  enabled: boolean
+  maxTransfersPerTicket?: number
+  requireRecipientEmail?: boolean
+}
+
+export type ResaleRules = {
+  enabled: boolean
+  maxMarkupPercent?: number
+  minPrice?: number
+  maxPrice?: number
+  windowStart?: number
+  windowEnd?: number
+  feePercent?: number
+}
+
+export type FraudRules = {
+  enabled: boolean
+  scanWindowMinutes: number
+  maxAttempts: number
+}
+
 export const events = pgTable("events", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -40,6 +76,22 @@ export const events = pgTable("events", {
   imageUrl: text("image_url"),
   ticketTemplateId: text("ticket_template_id"),
   tags: text("tags").array(),
+  seatSelectionEnabled: boolean("seat_selection_enabled").notNull().default(false),
+  seatMap: jsonb("seat_map").$type<SeatMap | null>(),
+  transferRules: jsonb("transfer_rules")
+    .$type<TransferRules>()
+    .notNull()
+    .default(sql`'{"enabled": true, "maxTransfersPerTicket": 1, "requireRecipientEmail": false}'::jsonb`),
+  resaleRules: jsonb("resale_rules")
+    .$type<ResaleRules>()
+    .notNull()
+    .default(sql`'{"enabled": false, "maxMarkupPercent": 10}'::jsonb`),
+  fraudRules: jsonb("fraud_rules")
+    .$type<FraudRules>()
+    .notNull()
+    .default(sql`'{"enabled": true, "scanWindowMinutes": 10, "maxAttempts": 3}'::jsonb`),
+  waitlistEnabled: boolean("waitlist_enabled").notNull().default(false),
+  waitlistCapacity: integer("waitlist_capacity"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 })
@@ -103,6 +155,74 @@ export const ticketTemplates = pgTable("ticket_templates", {
   backgroundColor: text("background_color").notNull(),
   elements: jsonb("elements").notNull().default(sql`'[]'::jsonb`),
   previewUrl: text("preview_url"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+})
+
+export const tickets = pgTable("tickets", {
+  id: text("id").primaryKey(),
+  eventId: text("event_id").notNull(),
+  customerId: text("customer_id"),
+  transactionId: text("transaction_id"),
+  status: text("status").notNull(),
+  priceTierName: text("price_tier_name"),
+  pricePaid: numeric("price_paid", { precision: 12, scale: 2 }),
+  qrPayload: text("qr_payload").notNull(),
+  seatSection: text("seat_section"),
+  seatRow: text("seat_row"),
+  seatNumber: text("seat_number"),
+  transferCount: integer("transfer_count").notNull().default(0),
+  checkInCount: integer("check_in_count").notNull().default(0),
+  checkedInAt: bigint("checked_in_at", { mode: "number" }),
+  lastCheckInAt: bigint("last_check_in_at", { mode: "number" }),
+  fraudFlag: boolean("fraud_flag").notNull().default(false),
+  issuedAt: bigint("issued_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+})
+
+export const ticketCheckins = pgTable("ticket_checkins", {
+  id: text("id").primaryKey(),
+  ticketId: text("ticket_id").notNull(),
+  eventId: text("event_id").notNull(),
+  scannerId: text("scanner_id"),
+  status: text("status").notNull(),
+  reason: text("reason"),
+  deviceId: text("device_id"),
+  location: text("location"),
+  scannedAt: bigint("scanned_at", { mode: "number" }).notNull(),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+})
+
+export const ticketTransfers = pgTable("ticket_transfers", {
+  id: text("id").primaryKey(),
+  ticketId: text("ticket_id").notNull(),
+  fromCustomerId: text("from_customer_id"),
+  toCustomerId: text("to_customer_id"),
+  status: text("status").notNull(),
+  transferToken: text("transfer_token"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+})
+
+export const waitlistEntries = pgTable("waitlist_entries", {
+  id: text("id").primaryKey(),
+  eventId: text("event_id").notNull(),
+  customerId: text("customer_id").notNull(),
+  status: text("status").notNull(),
+  quantity: integer("quantity").notNull().default(1),
+  position: integer("position"),
+  notes: text("notes"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+})
+
+export const resaleListings = pgTable("resale_listings", {
+  id: text("id").primaryKey(),
+  ticketId: text("ticket_id").notNull(),
+  eventId: text("event_id").notNull(),
+  sellerId: text("seller_id").notNull(),
+  price: numeric("price", { precision: 12, scale: 2 }).notNull(),
+  status: text("status").notNull(),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 })

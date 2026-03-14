@@ -10,6 +10,11 @@ import {
   savedReports,
   ticketTemplates,
   transactions,
+  tickets,
+  ticketCheckins,
+  ticketTransfers,
+  waitlistEntries,
+  resaleListings,
 } from "../lib/db/schema"
 import {
   mockCustomers,
@@ -19,6 +24,11 @@ import {
   mockSavedReports,
   mockTicketTemplates,
   mockTransactions,
+  mockTickets,
+  mockTicketCheckins,
+  mockTicketTransfers,
+  mockWaitlistEntries,
+  mockResaleListings,
 } from "../lib/mock-data"
 
 async function seed() {
@@ -26,6 +36,11 @@ async function seed() {
 
   await db.execute(sql`
     TRUNCATE TABLE
+      ticket_checkins,
+      ticket_transfers,
+      resale_listings,
+      waitlist_entries,
+      tickets,
       activity_logs,
       transactions,
       packages,
@@ -60,6 +75,13 @@ async function seed() {
       isFree: event.isFree,
       priceTiers: event.priceTiers,
       tags: event.tags,
+      seatSelectionEnabled: event.seatSelectionEnabled ?? false,
+      seatMap: event.seatMap ?? null,
+      transferRules: event.transferRules ?? { enabled: true, maxTransfersPerTicket: 1 },
+      resaleRules: event.resaleRules ?? { enabled: false, maxMarkupPercent: 10 },
+      fraudRules: event.fraudRules ?? { enabled: true, scanWindowMinutes: 10, maxAttempts: 3 },
+      waitlistEnabled: event.waitlistEnabled ?? false,
+      waitlistCapacity: event.waitlistCapacity ?? null,
       createdAt: event.createdAt,
       updatedAt: event.updatedAt,
     }))
@@ -156,6 +178,84 @@ async function seed() {
       source: tx.source,
       createdAt: tx.createdAt,
       updatedAt: tx.updatedAt,
+    }))
+  )
+
+  await db.insert(tickets).values(
+    mockTickets.map((ticket) => ({
+      id: ticket._id,
+      eventId: ticket.eventId,
+      customerId: ticket.customerId ?? null,
+      transactionId: ticket.transactionId ?? null,
+      status: ticket.status,
+      priceTierName: ticket.priceTierName ?? null,
+      pricePaid: ticket.pricePaid ?? null,
+      qrPayload: ticket.qrPayload,
+      seatSection: ticket.seatSection ?? null,
+      seatRow: ticket.seatRow ?? null,
+      seatNumber: ticket.seatNumber ?? null,
+      transferCount: ticket.transferCount,
+      checkInCount: ticket.checkInCount,
+      fraudFlag: ticket.fraudFlag,
+      checkedInAt: ticket.status === "checked_in" ? ticket.updatedAt : null,
+      lastCheckInAt: ticket.status === "checked_in" ? ticket.updatedAt : null,
+      issuedAt: ticket.issuedAt,
+      updatedAt: ticket.updatedAt,
+    }))
+  )
+
+  await db.insert(ticketCheckins).values(
+    mockTicketCheckins.map((checkin) => ({
+      id: checkin._id,
+      ticketId: checkin.ticketId,
+      eventId: checkin.eventId,
+      scannerId: checkin.scannerId ?? null,
+      status: checkin.status,
+      reason: checkin.reason ?? null,
+      deviceId: checkin.deviceId ?? null,
+      location: checkin.location ?? null,
+      scannedAt: checkin.scannedAt,
+      createdAt: checkin.createdAt,
+    }))
+  )
+
+  await db.insert(ticketTransfers).values(
+    mockTicketTransfers.map((transfer) => ({
+      id: transfer._id,
+      ticketId: transfer.ticketId,
+      fromCustomerId: transfer.fromCustomerId ?? null,
+      toCustomerId: transfer.toCustomerId ?? null,
+      status: transfer.status,
+      transferToken: transfer.transferToken ?? null,
+      createdAt: transfer.createdAt,
+      updatedAt: transfer.updatedAt,
+    }))
+  )
+
+  await db.insert(waitlistEntries).values(
+    mockWaitlistEntries.map((entry) => ({
+      id: entry._id,
+      eventId: entry.eventId,
+      customerId: entry.customerId,
+      status: entry.status,
+      quantity: entry.quantity,
+      position: entry.position ?? null,
+      notes: null,
+      createdAt: entry.createdAt,
+      updatedAt: entry.updatedAt,
+    }))
+  )
+
+  await db.insert(resaleListings).values(
+    mockResaleListings.map((listing) => ({
+      id: listing._id,
+      ticketId: listing.ticketId,
+      eventId: listing.eventId,
+      sellerId: listing.sellerId,
+      price: listing.price,
+      status: listing.status,
+      createdAt: listing.createdAt,
+      updatedAt: listing.updatedAt,
     }))
   )
 

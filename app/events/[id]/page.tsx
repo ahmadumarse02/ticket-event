@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import {
@@ -21,7 +21,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useLiveData } from "@/hooks/use-live-data"
-import type { MockEvent as EventRecord } from "@/lib/mock-data"
+import { cn } from "@/lib/utils"
+import type { MockEvent as EventRecord, MockTicket } from "@/lib/mock-data"
 
 const formatDate = (timestamp: number) =>
   new Date(timestamp).toLocaleDateString("en-US", {
@@ -57,15 +58,36 @@ export default function EventDetailPage() {
     { enabled: !!eventId, interval: 12000 }
   )
 
+  const { data: tickets = [] } = useLiveData<MockTicket[]>(
+    `/api/tickets?eventId=${eventId}`,
+    { enabled: !!eventId && !!event?.seatSelectionEnabled, interval: 12000 }
+  )
+
   const { data: latestEvents = [], isLoading: latestLoading } = useLiveData<EventRecord[]>(
     "/api/events?status=published&limit=6",
     { interval: 12000 }
   )
 
+  const [selectedSeat, setSelectedSeat] = useState<{
+    section: string
+    row: string
+    seat: string
+  } | null>(null)
+
   const latestList = useMemo(() => {
     if (!latestEvents) return []
     return latestEvents.filter((item) => item._id !== eventId).slice(0, 4)
   }, [eventId, latestEvents])
+
+  const occupiedSeats = useMemo(() => {
+    const occupied = new Set<string>()
+    tickets.forEach((ticket) => {
+      if (!ticket.seatSection || !ticket.seatRow || !ticket.seatNumber) return
+      if (["cancelled", "void"].includes(ticket.status)) return
+      occupied.add(`${ticket.seatSection}-${ticket.seatRow}-${ticket.seatNumber}`)
+    })
+    return occupied
+  }, [tickets])
 
   if (!eventId || eventLoading) {
     return (
@@ -137,6 +159,11 @@ export default function EventDetailPage() {
       : `${formatDate(event.startDate)} ${formatTime(event.startDate)} → ${formatDate(
           event.endDate
         )} ${formatTime(event.endDate)}`
+
+  const seatMap = event.seatMap
+  const showSeatSelection =
+    event.seatSelectionEnabled && !!seatMap && Array.isArray(seatMap.sections)
+  const seatMapSections = showSeatSelection ? seatMap?.sections ?? [] : []
 
   return (
       <div className="min-h-screen bg-background">
@@ -255,6 +282,24 @@ export default function EventDetailPage() {
                     <span className="text-muted-foreground">Recurrence</span>
                     <span className="font-semibold capitalize">
                       {event.recurrence?.type || "none"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Transfers</span>
+                    <span className="font-semibold">
+                      {event.transferRules?.enabled ? "Allowed" : "Not allowed"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Resale</span>
+                    <span className="font-semibold">
+                      {event.resaleRules?.enabled ? "Enabled" : "Disabled"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Waitlist</span>
+                    <span className="font-semibold">
+                      {event.waitlistEnabled ? "Available" : "Closed"}
                     </span>
                   </div>
                   <Separator />
@@ -380,6 +425,92 @@ export default function EventDetailPage() {
             </CardContent>
           </Card>
         </div>
+
+        {showSeatSelection ? (
+          <Card className="glass-card">
+            <CardHeader>
+              <CardTitle className="text-base">Choose your seat</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid gap-6">
+                {seatMapSections.map((section) => (
+                  <div key={section.id} className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="font-semibold">{section.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {section.rows} rows · {section.seatsPerRow} seats per row
+                        </p>
+                      </div>
+                      <Badge variant="outline" className="text-xs">
+                        Select a seat
+                      </Badge>
+                    </div>
+                    <div className="space-y-2">
+                      {Array.from({ length: section.rows }).map((_, rowIndex) => {
+                        const rowLabel = String.fromCharCode(65 + rowIndex)
+                        return (
+                          <div key={rowLabel} className="flex items-center gap-2">
+                            <span className="w-6 text-xs text-muted-foreground">{rowLabel}</span>
+                            <div className="flex flex-wrap gap-1">
+                              {Array.from({ length: section.seatsPerRow }).map((_, seatIndex) => {
+                                const seatNumber = seatIndex + 1
+                                const seatKey = `${section.name}-${rowLabel}-${seatNumber}`
+                                const isTaken = occupiedSeats.has(seatKey)
+                                const isSelected =
+                                  selectedSeat?.section === section.name &&
+                                  selectedSeat?.row === rowLabel &&
+                                  selectedSeat?.seat === seatNumber.toString()
+
+                                return (
+                                  <button
+                                    key={seatKey}
+                                    type="button"
+                                    disabled={isTaken}
+                                    onClick={() =>
+                                      setSelectedSeat({
+                                        section: section.name,
+                                        row: rowLabel,
+                                        seat: seatNumber.toString(),
+                                      })
+                                    }
+                                    className={cn(
+                                      "h-7 w-7 rounded border text-[10px] font-medium transition",
+                                      isTaken
+                                        ? "cursor-not-allowed border-border bg-muted text-muted-foreground"
+                                        : "border-border bg-background hover:border-primary/50",
+                                      isSelected && "border-primary bg-primary text-primary-foreground"
+                                    )}
+                                  >
+                                    {seatNumber}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <Separator />
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-muted-foreground">
+                  {selectedSeat
+                    ? `Selected seat: ${selectedSeat.section} Row ${selectedSeat.row} Seat ${selectedSeat.seat}`
+                    : "Select a seat to continue."}
+                </div>
+                <Button
+                  className="gradient-bg hover:opacity-90"
+                  disabled={!selectedSeat}
+                >
+                  Continue with selected seat
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card className="glass-card">
           <CardHeader>

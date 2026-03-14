@@ -51,6 +51,58 @@ interface PriceTier {
   price: number
 }
 
+const seatMapPresets = {
+  small: {
+    label: "Small Theater",
+    sections: [
+      { id: "orch", name: "Orchestra", rows: 4, seatsPerRow: 8 },
+    ],
+  },
+  medium: {
+    label: "Mid Size Hall",
+    sections: [
+      { id: "orch", name: "Orchestra", rows: 6, seatsPerRow: 10 },
+      { id: "mezz", name: "Mezzanine", rows: 4, seatsPerRow: 8 },
+    ],
+  },
+  large: {
+    label: "Arena Bowl",
+    sections: [
+      { id: "floor", name: "Floor", rows: 8, seatsPerRow: 12 },
+      { id: "lower", name: "Lower Bowl", rows: 6, seatsPerRow: 12 },
+      { id: "upper", name: "Upper Bowl", rows: 5, seatsPerRow: 14 },
+    ],
+  },
+} as const
+
+const getSeatMapPreset = (seatMap?: EventRecord["seatMap"] | null) => {
+  if (!seatMap) return "none"
+  const presets = Object.entries(seatMapPresets)
+  const match = presets.find(([, preset]) => {
+    return (
+      preset.sections.length === seatMap.sections?.length &&
+      preset.sections.every((section, index) => {
+        const target = seatMap.sections?.[index]
+        return (
+          target &&
+          section.rows === target.rows &&
+          section.seatsPerRow === target.seatsPerRow
+        )
+      })
+    )
+  })
+  return match?.[0] ?? "custom"
+}
+
+const buildSeatMap = (
+  preset: "none" | "small" | "medium" | "large" | "custom",
+  existing?: EventRecord["seatMap"] | null
+) => {
+  if (!preset || preset === "none") return null
+  if (preset === "custom") return existing ?? null
+  return seatMapPresets[preset] ?? null
+}
+
 const priceTierSchema = z
   .object({
     name: z.string().min(1, "Tier name is required."),
@@ -118,6 +170,22 @@ const rawEventSchema = z
     recurrenceType: z.enum(["none", "daily", "weekly", "biweekly", "monthly", "custom"]),
     recurrenceInterval: z.string().optional(),
     recurrenceEndDate: z.string().optional(),
+    seatSelectionEnabled: z.boolean(),
+    seatMapPreset: z.enum(["none", "small", "medium", "large", "custom"]),
+    waitlistEnabled: z.boolean(),
+    waitlistCapacity: z.string().optional(),
+    transferEnabled: z.boolean(),
+    maxTransfersPerTicket: z.string().optional(),
+    requireRecipientEmail: z.boolean(),
+    resaleEnabled: z.boolean(),
+    resaleMaxMarkup: z.string().optional(),
+    resaleMinPrice: z.string().optional(),
+    resaleMaxPrice: z.string().optional(),
+    resaleWindowStart: z.string().optional(),
+    resaleWindowEnd: z.string().optional(),
+    fraudEnabled: z.boolean(),
+    fraudScanWindowMinutes: z.string().optional(),
+    fraudMaxAttempts: z.string().optional(),
   })
   .refine((data) => data.recurrenceType !== "custom" || !!data.recurrenceInterval, {
     path: ["recurrenceInterval"],
@@ -205,6 +273,113 @@ const rawEventSchema = z
         message: "Provide an online URL or platform.",
       })
     }
+
+    if (data.seatSelectionEnabled && data.seatMapPreset === "none") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["seatMapPreset"],
+        message: "Select a seat map preset.",
+      })
+    }
+
+    if (data.waitlistEnabled && data.waitlistCapacity) {
+      const waitlistCapacity = Number(data.waitlistCapacity)
+      if (Number.isNaN(waitlistCapacity) || !Number.isInteger(waitlistCapacity) || waitlistCapacity <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["waitlistCapacity"],
+          message: "Waitlist capacity must be a positive whole number.",
+        })
+      }
+    }
+
+    if (data.transferEnabled && data.maxTransfersPerTicket) {
+      const maxTransfers = Number(data.maxTransfersPerTicket)
+      if (Number.isNaN(maxTransfers) || !Number.isInteger(maxTransfers) || maxTransfers <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["maxTransfersPerTicket"],
+          message: "Max transfers must be a positive whole number.",
+        })
+      }
+    }
+
+    if (data.resaleEnabled) {
+      const maxMarkup = data.resaleMaxMarkup ? Number(data.resaleMaxMarkup) : NaN
+      if (data.resaleMaxMarkup && (Number.isNaN(maxMarkup) || maxMarkup <= 0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["resaleMaxMarkup"],
+          message: "Max markup must be a positive number.",
+        })
+      }
+
+      const minPrice = data.resaleMinPrice ? Number(data.resaleMinPrice) : undefined
+      const maxPrice = data.resaleMaxPrice ? Number(data.resaleMaxPrice) : undefined
+
+      if (data.resaleMinPrice && (minPrice === undefined || Number.isNaN(minPrice) || minPrice < 0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["resaleMinPrice"],
+          message: "Minimum price must be zero or higher.",
+        })
+      }
+
+      if (data.resaleMaxPrice && (maxPrice === undefined || Number.isNaN(maxPrice) || maxPrice <= 0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["resaleMaxPrice"],
+          message: "Maximum price must be greater than zero.",
+        })
+      }
+
+      if (
+        typeof minPrice === "number" &&
+        typeof maxPrice === "number" &&
+        !Number.isNaN(minPrice) &&
+        !Number.isNaN(maxPrice) &&
+        maxPrice < minPrice
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["resaleMaxPrice"],
+          message: "Maximum price must be greater than minimum price.",
+        })
+      }
+
+      if (data.resaleWindowStart && data.resaleWindowEnd) {
+        const start = new Date(data.resaleWindowStart).getTime()
+        const end = new Date(data.resaleWindowEnd).getTime()
+        if (!Number.isNaN(start) && !Number.isNaN(end) && end <= start) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["resaleWindowEnd"],
+            message: "Resale window end must be after start.",
+          })
+        }
+      }
+    }
+
+    if (data.fraudEnabled) {
+      const scanWindow = data.fraudScanWindowMinutes ? Number(data.fraudScanWindowMinutes) : NaN
+      const maxAttempts = data.fraudMaxAttempts ? Number(data.fraudMaxAttempts) : NaN
+
+      if (data.fraudScanWindowMinutes && (Number.isNaN(scanWindow) || scanWindow <= 0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["fraudScanWindowMinutes"],
+          message: "Scan window must be a positive number.",
+        })
+      }
+
+      if (data.fraudMaxAttempts && (Number.isNaN(maxAttempts) || maxAttempts <= 0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["fraudMaxAttempts"],
+          message: "Max attempts must be a positive number.",
+        })
+      }
+    }
   })
 
 const eventSchema = z.preprocess((raw) => {
@@ -240,6 +415,22 @@ const defaultValues: EventFormValues = {
   recurrenceType: "none",
   recurrenceInterval: "",
   recurrenceEndDate: "",
+  seatSelectionEnabled: false,
+  seatMapPreset: "none",
+  waitlistEnabled: false,
+  waitlistCapacity: "",
+  transferEnabled: true,
+  maxTransfersPerTicket: "1",
+  requireRecipientEmail: false,
+  resaleEnabled: false,
+  resaleMaxMarkup: "10",
+  resaleMinPrice: "",
+  resaleMaxPrice: "",
+  resaleWindowStart: "",
+  resaleWindowEnd: "",
+  fraudEnabled: true,
+  fraudScanWindowMinutes: "10",
+  fraudMaxAttempts: "3",
 }
 
 export default function EventsPage() {
@@ -252,6 +443,7 @@ export default function EventsPage() {
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null)
+  const [storedSeatMap, setStoredSeatMap] = useState<EventRecord["seatMap"] | null>(null)
 
   const {
     register,
@@ -273,6 +465,11 @@ export default function EventsPage() {
   const eventType = watch("type")
   const isFree = watch("isFree")
   const recurrenceType = watch("recurrenceType")
+  const seatSelectionEnabled = watch("seatSelectionEnabled")
+  const waitlistEnabled = watch("waitlistEnabled")
+  const transferEnabled = watch("transferEnabled")
+  const resaleEnabled = watch("resaleEnabled")
+  const fraudEnabled = watch("fraudEnabled")
 
   const formatDate = (timestamp: number) => {
     return new Date(timestamp).toLocaleDateString("en-US", {
@@ -301,6 +498,7 @@ export default function EventsPage() {
   const handleCreate = () => {
     setSelectedEvent(null)
     reset(defaultValues)
+    setStoredSeatMap(null)
     setIsDialogOpen(true)
   }
 
@@ -341,8 +539,29 @@ export default function EventsPage() {
         recurrenceEndDate: event.recurrence?.endDate
           ? new Date(event.recurrence.endDate).toISOString().split("T")[0]
           : "",
+        seatSelectionEnabled: event.seatSelectionEnabled ?? false,
+        seatMapPreset: event.seatSelectionEnabled ? getSeatMapPreset(event.seatMap) : "none",
+        waitlistEnabled: event.waitlistEnabled ?? false,
+        waitlistCapacity: event.waitlistCapacity?.toString() || "",
+        transferEnabled: event.transferRules?.enabled ?? true,
+        maxTransfersPerTicket: event.transferRules?.maxTransfersPerTicket?.toString() || "1",
+        requireRecipientEmail: event.transferRules?.requireRecipientEmail ?? false,
+        resaleEnabled: event.resaleRules?.enabled ?? false,
+        resaleMaxMarkup: event.resaleRules?.maxMarkupPercent?.toString() || "10",
+        resaleMinPrice: event.resaleRules?.minPrice?.toString() || "",
+        resaleMaxPrice: event.resaleRules?.maxPrice?.toString() || "",
+        resaleWindowStart: event.resaleRules?.windowStart
+          ? new Date(event.resaleRules.windowStart).toISOString().split("T")[0]
+          : "",
+        resaleWindowEnd: event.resaleRules?.windowEnd
+          ? new Date(event.resaleRules.windowEnd).toISOString().split("T")[0]
+          : "",
+        fraudEnabled: event.fraudRules?.enabled ?? true,
+        fraudScanWindowMinutes: event.fraudRules?.scanWindowMinutes?.toString() || "10",
+        fraudMaxAttempts: event.fraudRules?.maxAttempts?.toString() || "3",
       })
       setSelectedEvent(eventId)
+      setStoredSeatMap(event.seatMap ?? null)
       setIsDialogOpen(true)
     }
   }
@@ -371,6 +590,9 @@ export default function EventsPage() {
     try {
       const startDateTime = new Date(`${values.startDate}T${values.startTime || "00:00"}`).getTime()
       const endDateTime = new Date(`${values.endDate}T${values.endTime || "23:59"}`).getTime()
+      const seatMap = values.seatSelectionEnabled
+        ? buildSeatMap(values.seatMapPreset, storedSeatMap)
+        : null
 
       const eventData = {
         name: values.name,
@@ -400,6 +622,42 @@ export default function EventsPage() {
           interval: values.recurrenceInterval ? parseInt(values.recurrenceInterval) : undefined,
           endDate: values.recurrenceEndDate
             ? new Date(values.recurrenceEndDate).getTime()
+            : undefined,
+        },
+        seatSelectionEnabled: values.seatSelectionEnabled,
+        seatMap,
+        waitlistEnabled: values.waitlistEnabled,
+        waitlistCapacity: values.waitlistCapacity
+          ? parseInt(values.waitlistCapacity)
+          : undefined,
+        transferRules: {
+          enabled: values.transferEnabled,
+          maxTransfersPerTicket: values.maxTransfersPerTicket
+            ? parseInt(values.maxTransfersPerTicket)
+            : undefined,
+          requireRecipientEmail: values.requireRecipientEmail,
+        },
+        resaleRules: {
+          enabled: values.resaleEnabled,
+          maxMarkupPercent: values.resaleMaxMarkup
+            ? parseFloat(values.resaleMaxMarkup)
+            : undefined,
+          minPrice: values.resaleMinPrice ? parseFloat(values.resaleMinPrice) : undefined,
+          maxPrice: values.resaleMaxPrice ? parseFloat(values.resaleMaxPrice) : undefined,
+          windowStart: values.resaleWindowStart
+            ? new Date(values.resaleWindowStart).getTime()
+            : undefined,
+          windowEnd: values.resaleWindowEnd
+            ? new Date(values.resaleWindowEnd).getTime()
+            : undefined,
+        },
+        fraudRules: {
+          enabled: values.fraudEnabled,
+          scanWindowMinutes: values.fraudScanWindowMinutes
+            ? parseInt(values.fraudScanWindowMinutes)
+            : undefined,
+          maxAttempts: values.fraudMaxAttempts
+            ? parseInt(values.fraudMaxAttempts)
             : undefined,
         },
       }
@@ -586,11 +844,12 @@ export default function EventsPage() {
 
           <form onSubmit={onSubmit} className="space-y-6">
             <Tabs defaultValue="basic" className="w-full">
-              <TabsList className="grid w-full grid-cols-4">
+              <TabsList className="grid w-full grid-cols-5">
                 <TabsTrigger value="basic">Basic Info</TabsTrigger>
                 <TabsTrigger value="location">Location</TabsTrigger>
                 <TabsTrigger value="pricing">Pricing</TabsTrigger>
                 <TabsTrigger value="schedule">Schedule</TabsTrigger>
+                <TabsTrigger value="ticketing">Ticketing</TabsTrigger>
               </TabsList>
 
               <TabsContent value="basic" className="space-y-4 mt-4">
@@ -917,6 +1176,263 @@ export default function EventsPage() {
                     </div>
                   )}
                 </div>
+              </TabsContent>
+
+              <TabsContent value="ticketing" className="space-y-6 mt-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Seat Selection</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Controller
+                          control={control}
+                          name="seatSelectionEnabled"
+                          render={({ field }) => (
+                            <Switch checked={field.value} onCheckedChange={field.onChange} />
+                          )}
+                        />
+                        <Label>Enable seat selection</Label>
+                      </div>
+                    </div>
+                    {seatSelectionEnabled && (
+                      <div className="grid gap-2">
+                        <Label>Seat map preset</Label>
+                        <Controller
+                          control={control}
+                          name="seatMapPreset"
+                          render={({ field }) => (
+                            <Select value={field.value} onValueChange={field.onChange}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select a preset" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="small">Small theater</SelectItem>
+                                <SelectItem value="medium">Mid size hall</SelectItem>
+                                <SelectItem value="large">Arena bowl</SelectItem>
+                                <SelectItem value="custom">Keep existing map</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          )}
+                        />
+                        {errors.seatMapPreset && (
+                          <p className="text-xs text-destructive">{errors.seatMapPreset.message}</p>
+                        )}
+                        <p className="text-xs text-muted-foreground">
+                          Choose a preset layout or keep the current seating map.
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Waitlist</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Controller
+                        control={control}
+                        name="waitlistEnabled"
+                        render={({ field }) => (
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        )}
+                      />
+                      <Label>Enable waitlist when sold out</Label>
+                    </div>
+                    {waitlistEnabled && (
+                      <div className="grid gap-2">
+                        <Label>Waitlist capacity</Label>
+                        <Input
+                          type="number"
+                          {...register("waitlistCapacity")}
+                          placeholder="e.g., 150"
+                        />
+                        {errors.waitlistCapacity && (
+                          <p className="text-xs text-destructive">
+                            {errors.waitlistCapacity.message}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Ticket Transfers</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Controller
+                        control={control}
+                        name="transferEnabled"
+                        render={({ field }) => (
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        )}
+                      />
+                      <Label>Allow ticket transfers</Label>
+                    </div>
+                    {transferEnabled && (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="grid gap-2">
+                          <Label>Max transfers per ticket</Label>
+                          <Input
+                            type="number"
+                            {...register("maxTransfersPerTicket")}
+                            placeholder="e.g., 1"
+                          />
+                          {errors.maxTransfersPerTicket && (
+                            <p className="text-xs text-destructive">
+                              {errors.maxTransfersPerTicket.message}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 pt-6">
+                          <Controller
+                            control={control}
+                            name="requireRecipientEmail"
+                            render={({ field }) => (
+                              <Switch checked={field.value} onCheckedChange={field.onChange} />
+                            )}
+                          />
+                          <Label>Require recipient email</Label>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Resale Rules</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Controller
+                        control={control}
+                        name="resaleEnabled"
+                        render={({ field }) => (
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        )}
+                      />
+                      <Label>Enable ticket resale</Label>
+                    </div>
+                    {resaleEnabled && (
+                      <div className="grid gap-4">
+                        <div className="grid gap-2">
+                          <Label>Max markup (%)</Label>
+                          <Input
+                            type="number"
+                            step="0.1"
+                            {...register("resaleMaxMarkup")}
+                            placeholder="e.g., 10"
+                          />
+                          {errors.resaleMaxMarkup && (
+                            <p className="text-xs text-destructive">
+                              {errors.resaleMaxMarkup.message}
+                            </p>
+                          )}
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="grid gap-2">
+                            <Label>Min price</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              {...register("resaleMinPrice")}
+                              placeholder="Optional"
+                            />
+                            {errors.resaleMinPrice && (
+                              <p className="text-xs text-destructive">
+                                {errors.resaleMinPrice.message}
+                              </p>
+                            )}
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>Max price</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              {...register("resaleMaxPrice")}
+                              placeholder="Optional"
+                            />
+                            {errors.resaleMaxPrice && (
+                              <p className="text-xs text-destructive">
+                                {errors.resaleMaxPrice.message}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <div className="grid gap-2">
+                            <Label>Resale window start</Label>
+                            <Input type="date" {...register("resaleWindowStart")} />
+                          </div>
+                          <div className="grid gap-2">
+                            <Label>Resale window end</Label>
+                            <Input type="date" {...register("resaleWindowEnd")} />
+                            {errors.resaleWindowEnd && (
+                              <p className="text-xs text-destructive">
+                                {errors.resaleWindowEnd.message}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-sm">Fraud Detection</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Controller
+                        control={control}
+                        name="fraudEnabled"
+                        render={({ field }) => (
+                          <Switch checked={field.value} onCheckedChange={field.onChange} />
+                        )}
+                      />
+                      <Label>Enable fraud detection</Label>
+                    </div>
+                    {fraudEnabled && (
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="grid gap-2">
+                          <Label>Scan window (minutes)</Label>
+                          <Input
+                            type="number"
+                            {...register("fraudScanWindowMinutes")}
+                            placeholder="e.g., 10"
+                          />
+                          {errors.fraudScanWindowMinutes && (
+                            <p className="text-xs text-destructive">
+                              {errors.fraudScanWindowMinutes.message}
+                            </p>
+                          )}
+                        </div>
+                        <div className="grid gap-2">
+                          <Label>Max attempts</Label>
+                          <Input
+                            type="number"
+                            {...register("fraudMaxAttempts")}
+                            placeholder="e.g., 3"
+                          />
+                          {errors.fraudMaxAttempts && (
+                            <p className="text-xs text-destructive">
+                              {errors.fraudMaxAttempts.message}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               </TabsContent>
             </Tabs>
 
