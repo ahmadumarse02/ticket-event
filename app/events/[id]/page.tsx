@@ -18,11 +18,33 @@ import { SiteFooter } from "@/components/public/site-footer"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useLiveData } from "@/hooks/use-live-data"
 import { cn } from "@/lib/utils"
 import type { MockEvent as EventRecord, MockTicket } from "@/lib/mock-data"
+import { apiRequest } from "@/lib/api-client"
+import { z } from "zod"
+import { useForm, Controller } from "react-hook-form"
+import { zodResolver } from "@hookform/resolvers/zod"
+import { toast } from "sonner"
 
 const formatDate = (timestamp: number) =>
   new Date(timestamp).toLocaleDateString("en-US", {
@@ -49,6 +71,28 @@ const formatCurrency = (amount: number) =>
     currency: "USD",
   }).format(amount)
 
+const checkoutSchema = z
+  .object({
+    firstName: z.string().min(1, "First name is required."),
+    lastName: z.string().min(1, "Last name is required."),
+    email: z.string().email("Enter a valid email."),
+    quantity: z.string().min(1, "Quantity is required."),
+    priceTierName: z.string().optional(),
+    paymentMethod: z.enum(["card", "cash", "paypal", "bank_transfer", "other"]),
+  })
+  .superRefine((data, ctx) => {
+    const quantity = Number(data.quantity)
+    if (Number.isNaN(quantity) || !Number.isInteger(quantity) || quantity <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["quantity"],
+        message: "Enter a valid quantity.",
+      })
+    }
+  })
+
+type CheckoutValues = z.infer<typeof checkoutSchema>
+
 export default function EventDetailPage() {
   const params = useParams<{ id: string }>()
   const eventId = Array.isArray(params.id) ? params.id[0] : params.id
@@ -73,6 +117,31 @@ export default function EventDetailPage() {
     row: string
     seat: string
   } | null>(null)
+
+  const [isCheckoutOpen, setIsCheckoutOpen] = useState(false)
+  const [checkoutSummary, setCheckoutSummary] = useState<{
+    transactionId: string
+    ticketsIssued: number
+  } | null>(null)
+
+  const {
+    register,
+    control,
+    handleSubmit,
+    reset,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<CheckoutValues>({
+    resolver: zodResolver(checkoutSchema),
+    defaultValues: {
+      firstName: "",
+      lastName: "",
+      email: "",
+      quantity: "1",
+      priceTierName: "",
+      paymentMethod: "card",
+    },
+  })
 
   const latestList = useMemo(() => {
     if (!latestEvents) return []
@@ -164,6 +233,55 @@ export default function EventDetailPage() {
   const showSeatSelection =
     event.seatSelectionEnabled && !!seatMap && Array.isArray(seatMap.sections)
   const seatMapSections = showSeatSelection ? seatMap?.sections ?? [] : []
+
+  const openCheckout = () => {
+    setCheckoutSummary(null)
+    reset({
+      firstName: "",
+      lastName: "",
+      email: "",
+      quantity: "1",
+      priceTierName: event.priceTiers?.[0]?.name || "",
+      paymentMethod: "card",
+    })
+    setIsCheckoutOpen(true)
+  }
+
+  const onCheckout = handleSubmit(async (values) => {
+    try {
+      const qty = selectedSeat ? 1 : Number(values.quantity)
+      const result = await apiRequest<{ transactionId: string; ticketsIssued: number }>(
+        "/api/checkout",
+        {
+          method: "POST",
+          body: {
+            eventId,
+            customer: {
+              firstName: values.firstName,
+              lastName: values.lastName,
+              email: values.email,
+            },
+            quantity: qty,
+            priceTierName: isFree ? null : values.priceTierName || null,
+            paymentMethod: values.paymentMethod,
+            seat: selectedSeat
+              ? {
+                  section: selectedSeat.section,
+                  row: selectedSeat.row,
+                  seatNumber: selectedSeat.seat,
+                }
+              : null,
+          },
+        }
+      )
+
+      setCheckoutSummary(result)
+      toast.success(isFree ? "Registration complete" : "Order created")
+    } catch (error) {
+      toast.error("Checkout failed")
+      console.error("[EventDetail] Checkout error:", error)
+    }
+  })
 
   return (
       <div className="min-h-screen bg-background">
@@ -304,7 +422,10 @@ export default function EventDetailPage() {
                   </div>
                   <Separator />
                   <div className="space-y-2">
-                    <Button className="w-full gradient-bg hover:opacity-90">
+                    <Button
+                      className="w-full gradient-bg hover:opacity-90"
+                      onClick={openCheckout}
+                    >
                       {isFree ? "Register for free" : "Get tickets"}
                     </Button>
                     {event.onlineUrl ? (
@@ -504,6 +625,7 @@ export default function EventDetailPage() {
                 <Button
                   className="gradient-bg hover:opacity-90"
                   disabled={!selectedSeat}
+                  onClick={openCheckout}
                 >
                   Continue with selected seat
                 </Button>
@@ -591,6 +713,137 @@ export default function EventDetailPage() {
           )}
         </section>
       </div>
+
+      <Dialog open={isCheckoutOpen} onOpenChange={setIsCheckoutOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{isFree ? "Register" : "Checkout"}</DialogTitle>
+            <DialogDescription>
+              {event.name}
+              {showSeatSelection && selectedSeat
+                ? ` - ${selectedSeat.section} Row ${selectedSeat.row} Seat ${selectedSeat.seat}`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={onCheckout} className="space-y-5">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label htmlFor="firstName">First name</Label>
+                <Input id="firstName" {...register("firstName")} placeholder="Avery" />
+                {errors.firstName && (
+                  <p className="text-xs text-destructive">{errors.firstName.message}</p>
+                )}
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="lastName">Last name</Label>
+                <Input id="lastName" {...register("lastName")} placeholder="Nguyen" />
+                {errors.lastName && (
+                  <p className="text-xs text-destructive">{errors.lastName.message}</p>
+                )}
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="email">Email</Label>
+              <Input id="email" {...register("email")} placeholder="you@example.com" />
+              {errors.email && (
+                <p className="text-xs text-destructive">{errors.email.message}</p>
+              )}
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label>Quantity</Label>
+                <Input type="number" min={1} max={10} {...register("quantity")} disabled={!!selectedSeat} />
+                {selectedSeat ? (
+                  <p className="text-xs text-muted-foreground">
+                    Seat selection currently supports one seat per order.
+                  </p>
+                ) : null}
+                {errors.quantity && (
+                  <p className="text-xs text-destructive">{errors.quantity.message}</p>
+                )}
+              </div>
+
+              {!isFree ? (
+                <div className="grid gap-2">
+                  <Label>Ticket type</Label>
+                  <Controller
+                    control={control}
+                    name="priceTierName"
+                    render={({ field }) => (
+                      <Select value={field.value || ""} onValueChange={field.onChange}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a tier" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {event.priceTiers.map((tier) => (
+                            <SelectItem key={tier.name} value={tier.name}>
+                              {tier.name} ({formatCurrency(tier.price)})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
+                  />
+                </div>
+              ) : (
+                <div className="grid gap-2">
+                  <Label>Price</Label>
+                  <div className="rounded-md border border-border bg-background/50 px-3 py-2 text-sm font-semibold">
+                    Free
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {!isFree ? (
+              <div className="grid gap-2">
+                <Label>Payment method</Label>
+                <Controller
+                  control={control}
+                  name="paymentMethod"
+                  render={({ field }) => (
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="card">Card (demo)</SelectItem>
+                        <SelectItem value="cash">Cash</SelectItem>
+                        <SelectItem value="paypal">PayPal</SelectItem>
+                        <SelectItem value="bank_transfer">Bank transfer</SelectItem>
+                        <SelectItem value="other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  )}
+                />
+                <p className="text-xs text-muted-foreground">
+                  This project currently records an order and issues QR tickets (no real payment provider wired yet).
+                </p>
+              </div>
+            ) : null}
+
+            {checkoutSummary ? (
+              <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
+                Created order <span className="font-semibold">{checkoutSummary.transactionId}</span>{" "}
+                and issued <span className="font-semibold">{checkoutSummary.ticketsIssued}</span>{" "}
+                ticket(s).
+              </div>
+            ) : null}
+
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="outline" onClick={() => setIsCheckoutOpen(false)}>
+                Close
+              </Button>
+              <Button type="submit" disabled={isSubmitting} className="gradient-bg hover:opacity-90">
+                {isSubmitting ? "Processing..." : isFree ? "Confirm registration" : "Pay and get QR tickets"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <SiteFooter />
     </div>
