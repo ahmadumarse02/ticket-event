@@ -12,6 +12,8 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const status = searchParams.get("status") || undefined
   const paymentMethod = searchParams.get("paymentMethod") || undefined
+  const customerId = searchParams.get("customerId") || undefined
+  const eventId = searchParams.get("eventId") || undefined
   const startDate = searchParams.get("startDate")
   const endDate = searchParams.get("endDate")
   const minAmount = searchParams.get("minAmount")
@@ -21,6 +23,8 @@ export async function GET(request: Request) {
   const conditions = []
   if (status) conditions.push(eq(transactions.status, status))
   if (paymentMethod) conditions.push(eq(transactions.paymentMethod, paymentMethod))
+  if (customerId) conditions.push(eq(transactions.customerId, customerId))
+  if (eventId) conditions.push(eq(transactions.eventId, eventId))
   if (startDate) conditions.push(gte(transactions.createdAt, Number(startDate)))
   if (endDate) conditions.push(lte(transactions.createdAt, Number(endDate)))
   if (minAmount) conditions.push(gte(transactions.total, minAmount))

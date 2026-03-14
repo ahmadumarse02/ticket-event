@@ -20,6 +20,7 @@ export async function GET(request: Request) {
     ...row,
     _id: row.id,
     totalSpent: Number(row.totalSpent || 0),
+    segmentTags: row.segmentTags || [],
   }))
 
   return NextResponse.json(mapped)
@@ -43,6 +44,7 @@ export async function POST(request: Request) {
     country: body.country ?? null,
     postalCode: body.postalCode ?? null,
     notes: body.notes ?? null,
+    segmentTags: body.segmentTags ?? [],
     familyId: body.familyId ?? null,
     relationshipToHead: body.relationshipToHead ?? null,
     totalSpent: body.totalSpent ?? 0,
@@ -68,6 +70,7 @@ export async function POST(request: Request) {
       ...rows[0],
       _id: rows[0].id,
       totalSpent: Number(rows[0].totalSpent || 0),
+      segmentTags: rows[0].segmentTags || [],
     },
     { status: 201 }
   )
