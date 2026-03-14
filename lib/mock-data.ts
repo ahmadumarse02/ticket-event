@@ -5,6 +5,42 @@ export type MockPriceTier = {
   price: number
 }
 
+export type MockSeatMapSection = {
+  id: string
+  name: string
+  rows: number
+  seatsPerRow: number
+  rowLabelPrefix?: string
+  seatLabelStart?: number
+}
+
+export type MockSeatMap = {
+  label: string
+  sections: MockSeatMapSection[]
+}
+
+export type MockTransferRules = {
+  enabled: boolean
+  maxTransfersPerTicket?: number
+  requireRecipientEmail?: boolean
+}
+
+export type MockResaleRules = {
+  enabled: boolean
+  maxMarkupPercent?: number
+  minPrice?: number
+  maxPrice?: number
+  windowStart?: number
+  windowEnd?: number
+  feePercent?: number
+}
+
+export type MockFraudRules = {
+  enabled: boolean
+  scanWindowMinutes: number
+  maxAttempts: number
+}
+
 export type MockEvent = {
   _id: string
   name: string
@@ -31,6 +67,13 @@ export type MockEvent = {
   imageUrl?: string
   ticketTemplateId?: string
   tags?: string[]
+  seatSelectionEnabled?: boolean
+  seatMap?: MockSeatMap | null
+  transferRules?: MockTransferRules
+  resaleRules?: MockResaleRules
+  fraudRules?: MockFraudRules
+  waitlistEnabled?: boolean
+  waitlistCapacity?: number
   createdAt: number
   updatedAt: number
 }
@@ -134,6 +177,71 @@ export type MockSavedReport = {
   type: "sales" | "customers" | "events"
 }
 
+export type MockTicket = {
+  _id: string
+  eventId: string
+  customerId?: string
+  transactionId?: string
+  status: "active" | "checked_in" | "cancelled" | "void" | "transferred" | "resold"
+  priceTierName?: string
+  pricePaid?: number
+  qrPayload: string
+  seatSection?: string
+  seatRow?: string
+  seatNumber?: string
+  transferCount: number
+  checkInCount: number
+  fraudFlag: boolean
+  issuedAt: number
+  updatedAt: number
+}
+
+export type MockTicketCheckin = {
+  _id: string
+  ticketId: string
+  eventId: string
+  status: "success" | "duplicate" | "invalid" | "fraud"
+  reason?: string
+  scannerId?: string
+  deviceId?: string
+  location?: string
+  scannedAt: number
+  createdAt: number
+}
+
+export type MockTicketTransfer = {
+  _id: string
+  ticketId: string
+  fromCustomerId?: string
+  toCustomerId?: string
+  status: "pending" | "accepted" | "declined" | "cancelled"
+  transferToken?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type MockWaitlistEntry = {
+  _id: string
+  eventId: string
+  customerId: string
+  status: "active" | "notified" | "converted" | "cancelled"
+  quantity: number
+  position?: number
+  createdAt: number
+  updatedAt: number
+}
+
+export type MockResaleListing = {
+  _id: string
+  ticketId: string
+  eventId: string
+  sellerId: string
+  price: number
+  status: "active" | "sold" | "cancelled" | "expired"
+  createdAt: number
+  updatedAt: number
+}
+
 const now = Date.now()
 const day = 24 * 60 * 60 * 1000
 
@@ -158,6 +266,35 @@ export const mockEvents: MockEvent[] = [
       { name: "VIP", price: 129 },
     ],
     tags: ["music", "outdoor"],
+    seatSelectionEnabled: true,
+    seatMap: {
+      label: "Harbor Park Main Stage",
+      sections: [
+        { id: "floor", name: "Floor", rows: 5, seatsPerRow: 10 },
+        { id: "balcony", name: "Balcony", rows: 4, seatsPerRow: 8 },
+      ],
+    },
+    transferRules: {
+      enabled: true,
+      maxTransfersPerTicket: 1,
+      requireRecipientEmail: true,
+    },
+    resaleRules: {
+      enabled: true,
+      maxMarkupPercent: 15,
+      minPrice: 25,
+      maxPrice: 200,
+      windowStart: now - 7 * day,
+      windowEnd: now + 30 * day,
+      feePercent: 8,
+    },
+    fraudRules: {
+      enabled: true,
+      scanWindowMinutes: 10,
+      maxAttempts: 3,
+    },
+    waitlistEnabled: true,
+    waitlistCapacity: 200,
     createdAt: now - 20 * day,
     updatedAt: now - 3 * day,
   },
@@ -216,6 +353,20 @@ export const mockEvents: MockEvent[] = [
       { name: "Shared Room", price: 199 },
     ],
     tags: ["wellness"],
+    transferRules: {
+      enabled: true,
+      maxTransfersPerTicket: 2,
+      requireRecipientEmail: false,
+    },
+    resaleRules: {
+      enabled: false,
+      maxMarkupPercent: 10,
+    },
+    fraudRules: {
+      enabled: true,
+      scanWindowMinutes: 15,
+      maxAttempts: 2,
+    },
     createdAt: now - 30 * day,
     updatedAt: now - 5 * day,
   },
@@ -448,6 +599,127 @@ export const mockTicketTemplates: MockTicketTemplate[] = [
     elements: [],
     createdAt: now - 60 * day,
     updatedAt: now - 12 * day,
+  },
+]
+
+export const mockTickets: MockTicket[] = [
+  {
+    _id: "tkt_001",
+    eventId: "evt_001",
+    customerId: "cus_001",
+    status: "active",
+    priceTierName: "VIP",
+    pricePaid: 129,
+    qrPayload: "QR-TKT-001",
+    seatSection: "Floor",
+    seatRow: "A",
+    seatNumber: "1",
+    transferCount: 0,
+    checkInCount: 0,
+    fraudFlag: false,
+    issuedAt: now - 4 * day,
+    updatedAt: now - 2 * day,
+  },
+  {
+    _id: "tkt_002",
+    eventId: "evt_001",
+    customerId: "cus_002",
+    status: "active",
+    priceTierName: "General Admission",
+    pricePaid: 49,
+    qrPayload: "QR-TKT-002",
+    seatSection: "Floor",
+    seatRow: "A",
+    seatNumber: "2",
+    transferCount: 0,
+    checkInCount: 0,
+    fraudFlag: false,
+    issuedAt: now - 3 * day,
+    updatedAt: now - 3 * day,
+  },
+  {
+    _id: "tkt_003",
+    eventId: "evt_001",
+    customerId: "cus_003",
+    status: "checked_in",
+    priceTierName: "General Admission",
+    pricePaid: 49,
+    qrPayload: "QR-TKT-003",
+    seatSection: "Balcony",
+    seatRow: "B",
+    seatNumber: "4",
+    transferCount: 0,
+    checkInCount: 1,
+    fraudFlag: false,
+    issuedAt: now - 6 * day,
+    updatedAt: now - 1 * day,
+  },
+  {
+    _id: "tkt_004",
+    eventId: "evt_002",
+    customerId: "cus_001",
+    status: "active",
+    priceTierName: "Virtual Pass",
+    pricePaid: 0,
+    qrPayload: "QR-TKT-004",
+    transferCount: 0,
+    checkInCount: 0,
+    fraudFlag: false,
+    issuedAt: now - 2 * day,
+    updatedAt: now - 2 * day,
+  },
+]
+
+export const mockTicketCheckins: MockTicketCheckin[] = [
+  {
+    _id: "chk_001",
+    ticketId: "tkt_003",
+    eventId: "evt_001",
+    status: "success",
+    scannerId: "staff_001",
+    deviceId: "scanner-01",
+    location: "North Gate",
+    scannedAt: now - 2 * 60 * 60 * 1000,
+    createdAt: now - 2 * 60 * 60 * 1000,
+  },
+]
+
+export const mockTicketTransfers: MockTicketTransfer[] = [
+  {
+    _id: "xfer_001",
+    ticketId: "tkt_002",
+    fromCustomerId: "cus_002",
+    toCustomerId: "cus_004",
+    status: "pending",
+    transferToken: "transfer-token-001",
+    createdAt: now - 3 * 60 * 60 * 1000,
+    updatedAt: now - 3 * 60 * 60 * 1000,
+  },
+]
+
+export const mockWaitlistEntries: MockWaitlistEntry[] = [
+  {
+    _id: "wl_001",
+    eventId: "evt_001",
+    customerId: "cus_004",
+    status: "active",
+    quantity: 2,
+    position: 1,
+    createdAt: now - 6 * 60 * 60 * 1000,
+    updatedAt: now - 6 * 60 * 60 * 1000,
+  },
+]
+
+export const mockResaleListings: MockResaleListing[] = [
+  {
+    _id: "res_001",
+    ticketId: "tkt_001",
+    eventId: "evt_001",
+    sellerId: "cus_001",
+    price: 149,
+    status: "active",
+    createdAt: now - 12 * 60 * 60 * 1000,
+    updatedAt: now - 12 * 60 * 60 * 1000,
   },
 ]
 

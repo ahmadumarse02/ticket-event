@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo } from "react"
+import { useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import {
@@ -12,13 +12,28 @@ import {
   Ticket,
   Users,
 } from "lucide-react"
+import { useForm } from "react-hook-form"
+import { z } from "zod"
+import { zodResolver } from "@hookform/resolvers/zod"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StatusBadge } from "@/components/admin/status-badge"
 import { useLiveData } from "@/hooks/use-live-data"
-import type { MockEvent as EventRecord } from "@/lib/mock-data"
+import { apiRequest } from "@/lib/api-client"
+import { toast } from "sonner"
+import type {
+  MockEvent as EventRecord,
+  MockResaleListing,
+  MockTicket,
+  MockTicketCheckin,
+  MockTicketTransfer,
+  MockWaitlistEntry,
+} from "@/lib/mock-data"
 
 const formatDate = (timestamp: number) =>
   new Date(timestamp).toLocaleDateString("en-US", {
@@ -47,6 +62,14 @@ const formatCurrency = (amount: number) =>
     currency: "USD",
   }).format(amount)
 
+const checkinSchema = z.object({
+  qrPayload: z.string().min(1, "QR code is required."),
+  scannerId: z.string().optional(),
+  location: z.string().optional(),
+})
+
+type CheckinFormValues = z.infer<typeof checkinSchema>
+
 export default function EventDetailPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
@@ -60,11 +83,92 @@ export default function EventDetailPage() {
     "/api/events?status=published&limit=6",
     { interval: 12000 }
   )
+  const { data: tickets = [] } = useLiveData<MockTicket[]>(
+    `/api/tickets?eventId=${eventId}`,
+    { enabled: !!eventId, interval: 12000 }
+  )
+  const { data: checkins = [] } = useLiveData<MockTicketCheckin[]>(
+    `/api/checkins?eventId=${eventId}`,
+    { enabled: !!eventId, interval: 12000 }
+  )
+  const { data: waitlist = [] } = useLiveData<MockWaitlistEntry[]>(
+    `/api/waitlists?eventId=${eventId}`,
+    { enabled: !!eventId, interval: 12000 }
+  )
+  const { data: transfers = [] } = useLiveData<MockTicketTransfer[]>(
+    `/api/ticket-transfers?eventId=${eventId}`,
+    { enabled: !!eventId, interval: 12000 }
+  )
+  const { data: resaleListings = [] } = useLiveData<MockResaleListing[]>(
+    `/api/resale-listings?eventId=${eventId}`,
+    { enabled: !!eventId, interval: 12000 }
+  )
+
+  const [checkinResult, setCheckinResult] = useState<MockTicketCheckin | null>(null)
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<CheckinFormValues>({
+    resolver: zodResolver(checkinSchema),
+    defaultValues: {
+      qrPayload: "",
+      scannerId: "",
+      location: "",
+    },
+  })
 
   const latestList = useMemo(() => {
     if (!latestEvents) return []
     return latestEvents.filter((item) => item._id !== eventId).slice(0, 4)
   }, [eventId, latestEvents])
+
+  const checkinStats = useMemo(() => {
+    const success = checkins.filter((item) => item.status === "success").length
+    const fraud = checkins.filter((item) => item.status === "fraud").length
+    const duplicate = checkins.filter((item) => item.status === "duplicate").length
+    return { success, fraud, duplicate }
+  }, [checkins])
+
+  const waitlistActive = useMemo(
+    () => waitlist.filter((entry) => entry.status === "active").length,
+    [waitlist]
+  )
+
+  const transferPending = useMemo(
+    () => transfers.filter((transfer) => transfer.status === "pending").length,
+    [transfers]
+  )
+
+  const resaleActive = useMemo(
+    () => resaleListings.filter((listing) => listing.status === "active").length,
+    [resaleListings]
+  )
+
+  const onCheckin = handleSubmit(async (values) => {
+    if (!eventId) return
+    try {
+      const result = await apiRequest<MockTicketCheckin>("/api/checkins", {
+        method: "POST",
+        body: {
+          ...values,
+          eventId,
+        },
+      })
+      setCheckinResult(result)
+      if (result.status === "success") {
+        toast.success("Check-in successful")
+      } else {
+        toast.error(`Check-in ${result.status}`)
+      }
+      reset({ qrPayload: "", scannerId: values.scannerId || "", location: values.location || "" })
+    } catch (error) {
+      toast.error("Check-in failed")
+      console.error("[EventDetail] Check-in error:", error)
+    }
+  })
 
   if (!eventId || eventLoading) {
     return (
@@ -118,6 +222,16 @@ export default function EventDetailPage() {
     : `${formatCurrency(Math.min(...event.priceTiers.map((tier) => tier.price)))} - ${formatCurrency(
         Math.max(...event.priceTiers.map((tier) => tier.price))
       )}`
+
+  const seatSummary = event.seatMap?.sections?.length
+    ? {
+        sections: event.seatMap.sections.length,
+        totalSeats: event.seatMap.sections.reduce(
+          (sum, section) => sum + section.rows * section.seatsPerRow,
+          0
+        ),
+      }
+    : null
 
   return (
     <div className="space-y-10">
@@ -301,6 +415,130 @@ export default function EventDetailPage() {
           </CardContent>
         </Card>
       </div>
+
+      <section className="grid gap-6 lg:grid-cols-3">
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="text-base">QR Check-in</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="rounded-lg border border-border bg-background/40 p-3">
+                <p className="text-xs text-muted-foreground">Success</p>
+                <p className="text-lg font-semibold">{checkinStats.success}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-background/40 p-3">
+                <p className="text-xs text-muted-foreground">Duplicate</p>
+                <p className="text-lg font-semibold">{checkinStats.duplicate}</p>
+              </div>
+              <div className="rounded-lg border border-border bg-background/40 p-3">
+                <p className="text-xs text-muted-foreground">Fraud</p>
+                <p className="text-lg font-semibold">{checkinStats.fraud}</p>
+              </div>
+            </div>
+
+            <form onSubmit={onCheckin} className="space-y-3">
+              <div className="grid gap-2">
+                <Label htmlFor="qrPayload">QR payload</Label>
+                <Input
+                  id="qrPayload"
+                  {...register("qrPayload")}
+                  placeholder="Paste scanned QR code"
+                />
+                {errors.qrPayload && (
+                  <p className="text-xs text-destructive">{errors.qrPayload.message}</p>
+                )}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-2">
+                  <Label htmlFor="scannerId">Scanner ID</Label>
+                  <Input id="scannerId" {...register("scannerId")} placeholder="staff_001" />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="location">Gate/location</Label>
+                  <Input id="location" {...register("location")} placeholder="North Gate" />
+                </div>
+              </div>
+              <Button type="submit" disabled={isSubmitting} className="gradient-bg">
+                {isSubmitting ? "Checking..." : "Check in ticket"}
+              </Button>
+            </form>
+
+            {checkinResult ? (
+              <div className="rounded-lg border border-border bg-background/40 p-3 text-xs text-muted-foreground">
+                Last scan:{" "}
+                <span className="font-semibold text-foreground">
+                  {checkinResult.status}
+                </span>
+                {checkinResult.reason ? ` - ${checkinResult.reason}` : ""}
+              </div>
+            ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="text-base">Waitlist & Transfers</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Waitlist active</span>
+              <span className="font-semibold">{waitlistActive}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Transfer requests</span>
+              <span className="font-semibold">{transferPending}</span>
+            </div>
+            <Separator />
+            <div className="space-y-2">
+              {waitlist.slice(0, 3).map((entry) => (
+                <div key={entry._id} className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground">
+                    {entry.customerId} · {entry.status}
+                  </span>
+                  <span className="text-xs">x{entry.quantity}</span>
+                </div>
+              ))}
+              {waitlist.length === 0 && (
+                <p className="text-xs text-muted-foreground">No waitlist entries yet.</p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="text-base">Resale & Seating</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4 text-sm">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Active resale listings</span>
+              <span className="font-semibold">{resaleActive}</span>
+            </div>
+            <div className="rounded-lg border border-border bg-background/40 p-3 text-xs text-muted-foreground">
+              Resale status:{" "}
+              <span className="font-semibold text-foreground">
+                {event.resaleRules?.enabled ? "Enabled" : "Disabled"}
+              </span>
+              {event.resaleRules?.enabled && event.resaleRules?.maxMarkupPercent
+                ? ` · Max markup ${event.resaleRules.maxMarkupPercent}%`
+                : ""}
+            </div>
+            {seatSummary ? (
+              <div className="rounded-lg border border-border bg-background/40 p-3 text-xs text-muted-foreground">
+                Seating map:{" "}
+                <span className="font-semibold text-foreground">
+                  {seatSummary.sections} sections · {seatSummary.totalSeats} seats
+                </span>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-border bg-background/40 p-3 text-xs text-muted-foreground">
+                Seating map: <span className="font-semibold text-foreground">General admission</span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
 
       <Card className="glass-card">
         <CardHeader>
