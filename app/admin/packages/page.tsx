@@ -47,27 +47,128 @@ const bundleItemSchema = z.object({
   quantity: z
     .string()
     .min(1, "Quantity is required.")
-    .refine((value) => !Number.isNaN(Number(value)), "Enter a valid quantity."),
+    .refine(
+      (value) => {
+        const quantity = Number(value)
+        return !Number.isNaN(quantity) && Number.isInteger(quantity) && quantity > 0
+      },
+      "Quantity must be a positive whole number."
+    ),
 })
 
-const packageSchema = z.object({
-  name: z.string().min(1, "Package name is required."),
-  description: z.string().optional(),
-  type: z.enum(["bundle", "pass", "addon"]),
-  status: z.enum(["active", "inactive"]),
-  price: z
-    .string()
-    .min(1, "Price is required.")
-    .refine((value) => !Number.isNaN(Number(value)), "Enter a valid price."),
-  originalPrice: z.string().optional(),
-  isGlobal: z.boolean(),
-  selectedEventIds: z.array(z.string()).default([]),
-  maxQuantity: z.string().optional(),
-  totalAvailable: z.string().optional(),
-  bundleItems: z.array(bundleItemSchema).default([]),
-  passValidDays: z.string().optional(),
-  addonType: z.string().optional(),
-})
+const rawPackageSchema = z
+  .object({
+    name: z.string().min(1, "Package name is required."),
+    description: z.string().optional(),
+    type: z.enum(["bundle", "pass", "addon"]),
+    status: z.enum(["active", "inactive"]),
+    price: z
+      .string()
+      .min(1, "Price is required.")
+      .refine((value) => {
+        const price = Number(value)
+        return !Number.isNaN(price) && price > 0
+      }, "Price must be greater than 0."),
+    originalPrice: z
+      .string()
+      .optional()
+      .refine((value) => {
+        if (!value) return true
+        const original = Number(value)
+        return !Number.isNaN(original) && original > 0
+      }, "Enter a valid original price."),
+    isGlobal: z.boolean(),
+    selectedEventIds: z.array(z.string()).default([]),
+    maxQuantity: z
+      .string()
+      .optional()
+      .refine((value) => {
+        if (!value) return true
+        const maxQuantity = Number(value)
+        return !Number.isNaN(maxQuantity) && Number.isInteger(maxQuantity) && maxQuantity > 0
+      }, "Max per order must be a positive whole number."),
+    totalAvailable: z
+      .string()
+      .optional()
+      .refine((value) => {
+        if (!value) return true
+        const totalAvailable = Number(value)
+        return (
+          !Number.isNaN(totalAvailable) && Number.isInteger(totalAvailable) && totalAvailable > 0
+        )
+      }, "Total available must be a positive whole number."),
+    bundleItems: z.array(bundleItemSchema).default([]),
+    passValidDays: z
+      .string()
+      .optional()
+      .refine((value) => {
+        if (!value) return true
+        const days = Number(value)
+        return !Number.isNaN(days) && Number.isInteger(days) && days > 0
+      }, "Pass valid days must be a positive whole number."),
+    addonType: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const price = Number(data.price)
+    const originalPrice = data.originalPrice ? Number(data.originalPrice) : undefined
+
+    if (typeof originalPrice === "number" && !Number.isNaN(originalPrice) && originalPrice < price) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["originalPrice"],
+        message: "Original price must be greater than or equal to price.",
+      })
+    }
+
+    if (!data.isGlobal && data.selectedEventIds.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["selectedEventIds"],
+        message: "Select at least one event.",
+      })
+    }
+
+    if (data.type === "bundle" && data.bundleItems.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["bundleItems"],
+        message: "Add at least one bundle item.",
+      })
+    }
+
+    if (data.type === "pass" && !data.passValidDays) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["passValidDays"],
+        message: "Enter how many days the pass is valid for.",
+      })
+    }
+
+    if (data.type === "addon" && !data.addonType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["addonType"],
+        message: "Select an add-on type.",
+      })
+    }
+  })
+
+const packageSchema = z.preprocess((raw) => {
+  // Clear type-specific fields so hidden inputs don't block submit.
+  if (!raw || typeof raw !== "object") return raw
+  const record = raw as Record<string, unknown>
+  const type = record.type
+  const isGlobal = record.isGlobal === true
+
+  const next: Record<string, unknown> = { ...record }
+
+  if (type !== "bundle") next.bundleItems = []
+  if (type !== "pass") next.passValidDays = ""
+  if (type !== "addon") next.addonType = ""
+  if (isGlobal) next.selectedEventIds = []
+
+  return next
+}, rawPackageSchema)
 
 type PackageFormValues = z.infer<typeof packageSchema>
 
@@ -607,6 +708,9 @@ export default function PackagesPage() {
                   {...register("passValidDays")}
                   placeholder="e.g., 30, 90, 365"
                 />
+                {errors.passValidDays && (
+                  <p className="text-xs text-destructive">{errors.passValidDays.message}</p>
+                )}
               </div>
             )}
 
@@ -631,6 +735,9 @@ export default function PackagesPage() {
                     </Select>
                   )}
                 />
+                {errors.addonType && (
+                  <p className="text-xs text-destructive">{errors.addonType.message}</p>
+                )}
               </div>
             )}
 
@@ -658,6 +765,9 @@ export default function PackagesPage() {
                   {...register("originalPrice")}
                   placeholder="For showing discounts"
                 />
+                {errors.originalPrice && (
+                  <p className="text-xs text-destructive">{errors.originalPrice.message}</p>
+                )}
               </div>
             </div>
 
@@ -704,6 +814,13 @@ export default function PackagesPage() {
                       </span>
                     )}
                   </div>
+                  {errors.selectedEventIds &&
+                    typeof errors.selectedEventIds === "object" &&
+                    "message" in errors.selectedEventIds && (
+                      <p className="text-xs text-destructive">
+                        {String(errors.selectedEventIds.message)}
+                      </p>
+                    )}
 
                   {/* Search */}
                   <div className="relative">
@@ -799,6 +916,9 @@ export default function PackagesPage() {
                     {...register("maxQuantity")}
                     placeholder="Unlimited"
                   />
+                  {errors.maxQuantity && (
+                    <p className="text-xs text-destructive">{errors.maxQuantity.message}</p>
+                  )}
                 </div>
                 <div className="grid gap-2">
                   <Label>Total Available</Label>
@@ -807,6 +927,9 @@ export default function PackagesPage() {
                     {...register("totalAvailable")}
                     placeholder="Unlimited"
                   />
+                  {errors.totalAvailable && (
+                    <p className="text-xs text-destructive">{errors.totalAvailable.message}</p>
+                  )}
                 </div>
               </div>
             </div>

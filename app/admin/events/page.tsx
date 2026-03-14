@@ -51,17 +51,52 @@ interface PriceTier {
   price: number
 }
 
-const priceTierSchema = z.object({
-  name: z.string().min(1, "Tier name is required."),
-  minAge: z.string().optional(),
-  maxAge: z.string().optional(),
-  price: z
-    .string()
-    .min(1, "Price is required.")
-    .refine((value) => !Number.isNaN(Number(value)), "Enter a valid price."),
-})
+const priceTierSchema = z
+  .object({
+    name: z.string().min(1, "Tier name is required."),
+    minAge: z.string().optional(),
+    maxAge: z.string().optional(),
+    price: z
+      .string()
+      .min(1, "Price is required.")
+      .refine((value) => !Number.isNaN(Number(value)), "Enter a valid price."),
+  })
+  .superRefine((tier, ctx) => {
+    const minAge = tier.minAge ? Number(tier.minAge) : undefined
+    const maxAge = tier.maxAge ? Number(tier.maxAge) : undefined
 
-const eventSchema = z
+    if (tier.minAge && (Number.isNaN(minAge) || !Number.isInteger(minAge) || minAge < 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["minAge"],
+        message: "Enter a valid minimum age.",
+      })
+    }
+
+    if (tier.maxAge && (Number.isNaN(maxAge) || !Number.isInteger(maxAge) || maxAge < 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maxAge"],
+        message: "Enter a valid maximum age.",
+      })
+    }
+
+    if (
+      typeof minAge === "number" &&
+      typeof maxAge === "number" &&
+      !Number.isNaN(minAge) &&
+      !Number.isNaN(maxAge) &&
+      minAge > maxAge
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["maxAge"],
+        message: "Max age must be greater than or equal to min age.",
+      })
+    }
+  })
+
+const rawEventSchema = z
   .object({
     name: z.string().min(1, "Event name is required."),
     description: z.string().optional(),
@@ -88,6 +123,99 @@ const eventSchema = z
     path: ["recurrenceInterval"],
     message: "Enter a recurrence interval.",
   })
+  .superRefine((data, ctx) => {
+    const startTimestamp = new Date(
+      `${data.startDate}T${data.startTime || "00:00"}`
+    ).getTime()
+    const endTimestamp = new Date(
+      `${data.endDate}T${data.endTime || "23:59"}`
+    ).getTime()
+
+    if (Number.isNaN(startTimestamp)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["startDate"],
+        message: "Enter a valid start date.",
+      })
+    }
+
+    if (Number.isNaN(endTimestamp)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endDate"],
+        message: "Enter a valid end date.",
+      })
+    }
+
+    if (!Number.isNaN(startTimestamp) && !Number.isNaN(endTimestamp) && endTimestamp <= startTimestamp) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["endDate"],
+        message: "End date/time must be after start date/time.",
+      })
+    }
+
+    if (data.capacity) {
+      const capacity = Number(data.capacity)
+      if (Number.isNaN(capacity) || !Number.isInteger(capacity) || capacity <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["capacity"],
+          message: "Capacity must be a positive whole number.",
+        })
+      }
+    }
+
+    if (data.recurrenceType === "custom") {
+      const interval = data.recurrenceInterval ? Number(data.recurrenceInterval) : NaN
+      if (Number.isNaN(interval) || !Number.isInteger(interval) || interval <= 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["recurrenceInterval"],
+          message: "Recurrence interval must be a positive whole number.",
+        })
+      }
+    }
+
+    if (!data.isFree) {
+      if (!data.priceTiers.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["priceTiers"],
+          message: "Add at least one price tier.",
+        })
+      }
+
+      data.priceTiers.forEach((tier, index) => {
+        const price = Number(tier.price)
+        if (Number.isNaN(price) || price <= 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["priceTiers", index, "price"],
+            message: "Price must be greater than 0.",
+          })
+        }
+      })
+    }
+
+    if (data.type === "online" && !data.onlineUrl && !data.onlinePlatform) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["onlineUrl"],
+        message: "Provide an online URL or platform.",
+      })
+    }
+  })
+
+const eventSchema = z.preprocess((raw) => {
+  // When an event is marked free we ignore price tiers entirely so hidden inputs don't block submit.
+  if (!raw || typeof raw !== "object") return raw
+  const record = raw as Record<string, unknown>
+  if (record.isFree === true) {
+    return { ...record, priceTiers: [] }
+  }
+  return raw
+}, rawEventSchema)
 
 type EventFormValues = z.infer<typeof eventSchema>
 
@@ -535,6 +663,9 @@ export default function EventsPage() {
                       {...register("capacity")}
                       placeholder="Maximum attendees (leave empty for unlimited)"
                     />
+                    {errors.capacity && (
+                      <p className="text-xs text-destructive">{errors.capacity.message}</p>
+                    )}
                   </div>
                 </div>
               </TabsContent>
@@ -600,17 +731,20 @@ export default function EventsPage() {
                         )}
                       />
                     </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="onlineUrl">Event URL</Label>
-                      <Input
-                        id="onlineUrl"
-                        {...register("onlineUrl")}
-                        placeholder="https://..."
-                      />
-                    </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="onlineUrl">Event URL</Label>
+                    <Input
+                      id="onlineUrl"
+                      {...register("onlineUrl")}
+                      placeholder="https://..."
+                    />
+                    {errors.onlineUrl && (
+                      <p className="text-xs text-destructive">{errors.onlineUrl.message}</p>
+                    )}
                   </div>
-                )}
-              </TabsContent>
+                </div>
+              )}
+            </TabsContent>
 
               <TabsContent value="pricing" className="space-y-4 mt-4">
                 <div className="flex items-center justify-between">
