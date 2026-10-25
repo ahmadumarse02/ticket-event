@@ -91,10 +91,33 @@ export type MockCustomer = {
   country?: string
   postalCode?: string
   notes?: string
+  segmentTags?: string[]
   familyId?: string
   relationshipToHead?: string
   totalSpent: number
   totalTickets: number
+  createdAt: number
+  updatedAt: number
+}
+
+export type MockCustomerNote = {
+  _id: string
+  customerId: string
+  body: string
+  actorName?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type MockCustomerFollowUp = {
+  _id: string
+  customerId: string
+  title: string
+  notes?: string
+  dueAt: number
+  status: "open" | "completed" | "cancelled"
+  priority: "low" | "medium" | "high"
+  completedAt?: number
   createdAt: number
   updatedAt: number
 }
@@ -404,6 +427,7 @@ export const mockCustomers: MockCustomer[] = [
     age: 29,
     city: "San Francisco",
     country: "USA",
+    segmentTags: ["vip", "repeat"],
     totalSpent: 420,
     totalTickets: 5,
     createdAt: now - 120 * day,
@@ -419,6 +443,7 @@ export const mockCustomers: MockCustomer[] = [
     age: 35,
     city: "New York",
     country: "USA",
+    segmentTags: ["family"],
     totalSpent: 860,
     totalTickets: 9,
     createdAt: now - 200 * day,
@@ -431,6 +456,7 @@ export const mockCustomers: MockCustomer[] = [
     email: "priya.desai@example.com",
     city: "Seattle",
     country: "USA",
+    segmentTags: ["new"],
     totalSpent: 190,
     totalTickets: 2,
     createdAt: now - 40 * day,
@@ -443,6 +469,7 @@ export const mockCustomers: MockCustomer[] = [
     email: "lucas.mueller@example.com",
     city: "Denver",
     country: "USA",
+    segmentTags: ["high_value"],
     totalSpent: 1250,
     totalTickets: 14,
     createdAt: now - 300 * day,
@@ -720,6 +747,50 @@ export const mockResaleListings: MockResaleListing[] = [
     status: "active",
     createdAt: now - 12 * 60 * 60 * 1000,
     updatedAt: now - 12 * 60 * 60 * 1000,
+  },
+]
+
+export const mockCustomerNotes: MockCustomerNote[] = [
+  {
+    _id: "note_001",
+    customerId: "cus_001",
+    body: "Prefers VIP seating and early entry. Follow up about upcoming premium events.",
+    actorName: "System",
+    createdAt: now - 5 * day,
+    updatedAt: now - 5 * day,
+  },
+  {
+    _id: "note_002",
+    customerId: "cus_002",
+    body: "Family account head. Interested in bundles and weekend events.",
+    actorName: "System",
+    createdAt: now - 12 * day,
+    updatedAt: now - 12 * day,
+  },
+]
+
+export const mockCustomerFollowUps: MockCustomerFollowUp[] = [
+  {
+    _id: "fup_001",
+    customerId: "cus_001",
+    title: "Invite to VIP pre-sale",
+    notes: "Send VIP pre-sale link 48 hours before tickets open.",
+    dueAt: now + 2 * day,
+    status: "open",
+    priority: "high",
+    createdAt: now - day,
+    updatedAt: now - day,
+  },
+  {
+    _id: "fup_002",
+    customerId: "cus_003",
+    title: "Welcome email",
+    notes: "Send onboarding email and ask for feedback after first event.",
+    dueAt: now + 1 * day,
+    status: "open",
+    priority: "medium",
+    createdAt: now - 2 * day,
+    updatedAt: now - 2 * day,
   },
 ]
 

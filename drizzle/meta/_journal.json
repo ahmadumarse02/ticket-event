@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1773317442112,
-      "tag": "0000_material_silver_fox",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1773321411412,
-      "tag": "0001_tiny_daredevil",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1773336814840,
-      "tag": "0002_wooden_riptide",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1773491084401,
-      "tag": "0003_sparkling_changeling",
+      "when": 1773495924895,
+      "tag": "0000_boring_makkari",
       "breakpoints": true
     }
   ]

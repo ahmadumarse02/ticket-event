@@ -117,10 +117,36 @@ export const customers = pgTable("customers", {
   country: text("country"),
   postalCode: text("postal_code"),
   notes: text("notes"),
+  segmentTags: text("segment_tags").array().notNull().default(sql`'{}'::text[]`),
   familyId: text("family_id"),
   relationshipToHead: text("relationship_to_head"),
   totalSpent: numeric("total_spent", { precision: 12, scale: 2 }).notNull().default("0"),
   totalTickets: integer("total_tickets").notNull().default(0),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+})
+
+export const customerNotes = pgTable("customer_notes", {
+  id: text("id").primaryKey(),
+  customerId: text("customer_id").notNull(),
+  body: text("body").notNull(),
+  actorId: text("actor_id"),
+  actorName: text("actor_name"),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
+})
+
+export const customerFollowUps = pgTable("customer_followups", {
+  id: text("id").primaryKey(),
+  customerId: text("customer_id").notNull(),
+  title: text("title").notNull(),
+  notes: text("notes"),
+  dueAt: bigint("due_at", { mode: "number" }).notNull(),
+  status: text("status").notNull().default("open"),
+  priority: text("priority").notNull().default("medium"),
+  completedAt: bigint("completed_at", { mode: "number" }),
+  actorId: text("actor_id"),
+  actorName: text("actor_name"),
   createdAt: bigint("created_at", { mode: "number" }).notNull(),
   updatedAt: bigint("updated_at", { mode: "number" }).notNull(),
 })

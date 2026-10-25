@@ -3,6 +3,8 @@ import { sql } from "drizzle-orm"
 import { db } from "../lib/db"
 import {
   customers,
+  customerNotes,
+  customerFollowUps,
   events,
   families,
   packages,
@@ -18,6 +20,8 @@ import {
 } from "../lib/db/schema"
 import {
   mockCustomers,
+  mockCustomerNotes,
+  mockCustomerFollowUps,
   mockEvents,
   mockFamilies,
   mockPackages,
@@ -36,6 +40,8 @@ async function seed() {
 
   await db.execute(sql`
     TRUNCATE TABLE
+      customer_followups,
+      customer_notes,
       ticket_checkins,
       ticket_transfers,
       resale_listings,
@@ -111,12 +117,42 @@ async function seed() {
       country: customer.country,
       postalCode: customer.postalCode,
       notes: customer.notes,
+      segmentTags: customer.segmentTags ?? [],
       familyId: customer.familyId,
       relationshipToHead: customer.relationshipToHead,
       totalSpent: customer.totalSpent,
       totalTickets: customer.totalTickets,
       createdAt: customer.createdAt,
       updatedAt: customer.updatedAt,
+    }))
+  )
+
+  await db.insert(customerNotes).values(
+    mockCustomerNotes.map((note) => ({
+      id: note._id,
+      customerId: note.customerId,
+      body: note.body,
+      actorId: null,
+      actorName: note.actorName ?? null,
+      createdAt: note.createdAt,
+      updatedAt: note.updatedAt,
+    }))
+  )
+
+  await db.insert(customerFollowUps).values(
+    mockCustomerFollowUps.map((followUp) => ({
+      id: followUp._id,
+      customerId: followUp.customerId,
+      title: followUp.title,
+      notes: followUp.notes ?? null,
+      dueAt: followUp.dueAt,
+      status: followUp.status,
+      priority: followUp.priority,
+      completedAt: followUp.completedAt ?? null,
+      actorId: null,
+      actorName: null,
+      createdAt: followUp.createdAt,
+      updatedAt: followUp.updatedAt,
     }))
   )
 

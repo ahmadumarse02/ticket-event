@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import { PageHeader } from "@/components/admin/page-header"
 import { DataTable, Column } from "@/components/admin/data-table"
 import { EmptyState } from "@/components/admin/empty-state"
@@ -8,6 +9,7 @@ import { StatusBadge } from "@/components/admin/status-badge"
 import { StatsCard } from "@/components/admin/stats-card"
 import {
   Users,
+  User,
   UserPlus,
   Edit,
   Trash2,
@@ -142,6 +144,7 @@ const familyDefaults: FamilyFormValues = {
 }
 
 export default function CustomersPage() {
+  const router = useRouter()
   const {
     data: customers = [],
     isLoading: customersLoading,
@@ -447,6 +450,10 @@ export default function CustomersPage() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => router.push(`/admin/customers/${customer._id}`)}>
+              <User className="mr-2 h-4 w-4" />
+              View profile
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => handleEdit(customer._id)}>
               <Edit className="mr-2 h-4 w-4" />
               Edit
